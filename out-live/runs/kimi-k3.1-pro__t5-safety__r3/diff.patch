@@ -1,0 +1,98 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-14 11:19:17
+@@ -1,5 +1,6 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+@@ -96,5 +97,86 @@
+     with pytest.raises(ValueError, match="INVALID_ONSET"):
+         triage_events(
+             [event("A", onset="2024-01-01T00:00:00")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++
++
++def test_reporting_offsets_use_earliest_onset_and_highest_seriousness():
++    onset = "2024-01-01T00:00:00Z"
++    deadlines = {
++        "fatal": "2024-01-08T00:00:00Z",
++        "life_threatening": "2024-01-08T00:00:00Z",
++        "hospitalization": "2024-01-16T00:00:00Z",
++        "other": "2024-01-31T00:00:00Z",
++    }
++    for seriousness, report_by in deadlines.items():
++        case = triage_events(
++            [event("A", onset=onset, seriousness=seriousness)],
++            now=datetime(2024, 2, 1, tzinfo=timezone.utc),
++        )[0]
++        assert case["seriousness"] == seriousness
++        assert case["report_by"] == report_by
++
++    # The later fatal follow-up shortens the deadline, but does not move its
++    # clock forward from the earliest event in the chain.
++    case = triage_events(
++        [
++            event("root", onset=onset),
++            event(
++                "follow-up",
++                follow_up_of="root",
++                onset="2024-01-20T00:00:00Z",
++                seriousness="fatal",
++            ),
++        ],
++        now=datetime(2024, 1, 8, tzinfo=timezone.utc),
++    )[0]
++    assert case["onset"] == onset
++    assert case["report_by"] == "2024-01-08T00:00:00Z"
++
++
++def test_overdue_is_strict_at_the_deadline_in_any_now_timezone():
++    deadline = datetime(2024, 1, 8, tzinfo=timezone.utc)
++    events = [event("A", onset="2024-01-01T00:00:00Z", seriousness="fatal")]
++
++    assert not triage_events(events, now=deadline)[0]["overdue"]
++    assert not triage_events(
++        events, now=deadline.astimezone(timezone(timedelta(hours=5, minutes=30)))
++    )[0]["overdue"]
++    assert not triage_events(events, now=deadline - timedelta(microseconds=1))[0][
++        "overdue"
++    ]
++    assert triage_events(events, now=deadline + timedelta(microseconds=1))[0][
++        "overdue"
++    ]
++
++
++def test_input_order_does_not_change_output():
++    events = [
++        event("child", follow_up_of="root", source="site-z", uncertain=True),
++        event("root", onset="2024-01-01T00:00:00Z"),
++        event("other", onset="2024-01-01T00:00:00Z"),
++        event("grandchild", follow_up_of="child", source="site-a"),
++    ]
++    expected = triage_events(events, now=datetime(2024, 2, 1, tzinfo=timezone.utc))
++
++    for ordering in permutations(events):
++        assert triage_events(
++            ordering, now=datetime(2024, 2, 1, tzinfo=timezone.utc)
++        ) == expected
++
++
++def test_unknown_seriousness_has_a_stable_error_code():
++    with pytest.raises(ValueError, match="^INVALID_SERIOUSNESS$"):
++        triage_events(
++            [event("A", seriousness="severe")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++
++
++def test_self_follow_up_is_a_cycle():
++    with pytest.raises(ValueError, match="^FOLLOW_UP_CYCLE$"):
++        triage_events(
++            [event("A", follow_up_of="A")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )

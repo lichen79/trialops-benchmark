@@ -1,0 +1,18 @@
+{
+ "generated_at": "2026-11-14T10:08:35Z",
+ "reps": 1,
+ "models": [
+  "kimi-k3.1-pro"
+ ],
+ "tasks": [
+  "t1-eligibility"
+ ],
+ "runs": [
+  {
+   "run_id": "kimi-k3.1-pro__t1-eligibility__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t1-eligibility",
+   "rep": 1
+  }
+ ]
+}

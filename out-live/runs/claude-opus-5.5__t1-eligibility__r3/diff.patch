@@ -1,0 +1,82 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_eligibility.py b/tests/test_eligibility.py
+--- a/tests/test_eligibility.py	2026-11-13 14:56:26
++++ b/tests/test_eligibility.py	2026-11-14 11:15:27
+@@ -96,6 +96,78 @@
+     assert result["reasons"] == ["CONSENT_VERSION"]
+ 
+ 
++def test_values_just_outside_inclusive_boundaries_fail():
++    protocol = make_protocol()
++    protocol["min_age"] = protocol["max_age"] = 24
++    subject = make_subject()
++    subject["labs"] = {"A": 0.999, "Z": 20.001}
++
++    day_before_birthday = evaluate_subject(subject, protocol, date(2024, 6, 14))
++    assert day_before_birthday["reasons"] == [
++        "CONSENT_MISSING",
++        "AGE_BELOW_MIN",
++        "LAB_A_LOW",
++        "LAB_Z_HIGH",
++    ]
++    assert day_before_birthday["consent_version"] is None
++
++    protocol["min_age"] = 18
++    protocol["max_age"] = 23
++    subject["labs"] = {"A": 3, "Z": 10}
++    on_birthday = evaluate_subject(subject, protocol, date(2024, 6, 15))
++    assert on_birthday["reasons"] == ["AGE_ABOVE_MAX"]
++
++
++def test_consent_after_evaluation_date_is_ignored_and_none_reported():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-16"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++
++def test_retired_consent_with_required_version_is_missing_only():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2023-12-31"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result["reasons"] == ["CONSENT_MISSING"]
++    assert result["consent_version"] == "v2"
++
++
++@pytest.mark.parametrize(
++    "field",
++    ["min_age", "max_age", "required_consent_version", "consent_valid_from",
++     "labs", "exclusions"],
++)
++def test_missing_protocol_field_raises_value_error(field):
++    protocol = make_protocol()
++    del protocol[field]
++    with pytest.raises(ValueError, match=field):
++        evaluate_subject(make_subject(), protocol, date(2024, 6, 15))
++
++
++@pytest.mark.parametrize("field", ["birth_date", "consents", "labs", "flags"])
++def test_missing_subject_field_raises_value_error(field):
++    subject = make_subject()
++    del subject[field]
++    with pytest.raises(ValueError, match=field):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++
++def test_malformed_consent_date_raises_value_error():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-02-30"}]
++    with pytest.raises(ValueError, match="signed_on"):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++
+ def test_malformed_required_fields_raise_field_naming_value_errors():
+     subject = make_subject()
+     subject["birth_date"] = "not-a-date"

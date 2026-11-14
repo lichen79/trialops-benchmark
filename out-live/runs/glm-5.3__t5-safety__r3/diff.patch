@@ -1,0 +1,238 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-14 12:16:31
+@@ -1,5 +1,6 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+@@ -19,6 +20,10 @@
+     return value
+ 
+ 
++def aware(*args, offset=timezone.utc):
++    return datetime(*args, tzinfo=offset)
++
++
+ def test_chained_followups_merge_offsets_sources_and_seriousness():
+     events = [
+         event(
+@@ -98,3 +103,215 @@
+             [event("A", onset="2024-01-01T00:00:00")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
++
++
++def test_deep_chain_with_fan_in_merges_into_one_case_in_any_order():
++    events = [
++        event("E1", onset="2024-01-01T00:00:00Z", source="site-b"),
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-01-03T00:00:00Z",
++            source="site-a",
++            uncertain=True,
++        ),
++        event(
++            "E3",
++            follow_up_of="E1",
++            onset="2024-01-02T00:00:00Z",
++            source="site-a",
++            seriousness="hospitalization",
++        ),
++        event("E4", follow_up_of="E2", onset="2024-01-05T00:00:00Z", source="site-c"),
++    ]
++    now = aware(2024, 1, 10)
++    expected = {
++        "case_id": "E1",
++        "subject_pseudonym": "subject-001",
++        "event_code": "SYNTH-01",
++        "onset": "2024-01-01T00:00:00Z",
++        "seriousness": "hospitalization",
++        "report_by": "2024-01-16T00:00:00Z",
++        "sources": ["site-a", "site-b", "site-c"],
++        "event_ids": ["E1", "E2", "E3", "E4"],
++        "uncertain": True,
++        "overdue": False,
++    }
++
++    assert triage_events(events, now=now) == [expected]
++    for order in permutations(events):
++        assert triage_events(list(order), now=now) == [expected]
++
++
++def test_offsets_normalize_to_utc_and_earliest_onset_sets_the_clock():
++    events = [
++        event(
++            "E1",
++            onset="2024-05-01T10:00:00+05:30",
++            seriousness="hospitalization",
++            source="site-b",
++        ),
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-04-30T20:00:00-08:00",
++            source="site-a",
++        ),
++    ]
++    now = aware(2024, 5, 1)
++
++    assert triage_events(events, now=now) == [
++        {
++            "case_id": "E1",
++            "subject_pseudonym": "subject-001",
++            "event_code": "SYNTH-01",
++            "onset": "2024-05-01T04:00:00Z",
++            "seriousness": "hospitalization",
++            "report_by": "2024-05-16T04:00:00Z",
++            "sources": ["site-a", "site-b"],
++            "event_ids": ["E1", "E2"],
++            "uncertain": False,
++            "overdue": False,
++        }
++    ]
++
++
++def test_duplicate_root_ids_are_rejected_whichever_position_they_arrive_in():
++    events = [
++        event("E1"),
++        event("E2", follow_up_of="E1", onset="2024-01-02T00:00:00Z", source="site-a"),
++        event("E1", onset="2024-02-01T00:00:00Z", source="site-c"),
++    ]
++    now = aware(2024, 1, 1)
++
++    for order in (events, list(reversed(events)), [events[1], events[0], events[2]]):
++        with pytest.raises(ValueError, match="DUPLICATE_EVENT_ID"):
++            triage_events(order, now=now)
++
++
++def test_self_links_and_cycles_with_tails_are_rejected_in_any_order():
++    now = aware(2024, 1, 1)
++    self_link = [event("A", follow_up_of="A")]
++    two_node = [event("A", follow_up_of="B"), event("B", follow_up_of="A")]
++    tailed = [
++        event("A", follow_up_of="B"),
++        event("B", follow_up_of="C"),
++        event("C", follow_up_of="B"),
++    ]
++
++    for events in (self_link, two_node, tailed):
++        for order in permutations(events):
++            with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++                triage_events(list(order), now=now)
++
++
++def test_mixed_subject_pseudonyms_or_event_codes_are_rejected():
++    now = aware(2024, 1, 1)
++
++    with pytest.raises(ValueError, match="MIXED_CASE"):
++        triage_events(
++            [event("A"), event("B", follow_up_of="A", event_code="SYNTH-02")],
++            now=now,
++        )
++    with pytest.raises(ValueError, match="MIXED_CASE"):
++        triage_events(
++            [
++                event("B", follow_up_of="A", subject_pseudonym="subject-002"),
++                event("A"),
++            ],
++            now=now,
++        )
++
++
++@pytest.mark.parametrize(
++    ("follow_up_seriousness", "expected_seriousness", "expected_report_by"),
++    [
++        ("other", "other", "2024-03-31T00:00:00Z"),
++        ("hospitalization", "hospitalization", "2024-03-16T00:00:00Z"),
++        ("life_threatening", "life_threatening", "2024-03-08T00:00:00Z"),
++        ("fatal", "fatal", "2024-03-08T00:00:00Z"),
++    ],
++)
++def test_seriousness_sets_the_reporting_window(
++    follow_up_seriousness, expected_seriousness, expected_report_by
++):
++    events = [
++        event("E1", onset="2024-03-01T00:00:00Z", seriousness="other"),
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-03-02T00:00:00Z",
++            seriousness=follow_up_seriousness,
++            source="site-a",
++        ),
++    ]
++
++    case = triage_events(events, now=aware(2024, 3, 1))[0]
++
++    assert case["seriousness"] == expected_seriousness
++    assert case["report_by"] == expected_report_by
++
++
++def test_highest_seriousness_in_a_chain_is_never_downgraded():
++    events = [
++        event("E1", onset="2024-03-01T00:00:00Z", seriousness="fatal"),
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-03-02T00:00:00Z",
++            seriousness="life_threatening",
++            source="site-a",
++        ),
++        event(
++            "E3",
++            follow_up_of="E2",
++            onset="2024-03-03T00:00:00Z",
++            seriousness="hospitalization",
++            source="site-c",
++        ),
++    ]
++
++    case = triage_events(events, now=aware(2024, 3, 1))[0]
++
++    assert case["seriousness"] == "fatal"
++    assert case["onset"] == "2024-03-01T00:00:00Z"
++    assert case["report_by"] == "2024-03-08T00:00:00Z"
++
++
++def test_overdue_boundary_is_strict_and_offset_aware():
++    events = [event("E1", onset="2024-01-01T00:00:00Z", seriousness="other")]
++    report_by = datetime(2024, 1, 31, tzinfo=timezone.utc)
++
++    assert triage_events(events, now=aware(2024, 1, 1))[0]["report_by"] == (
++        "2024-01-31T00:00:00Z"
++    )
++    # Equality is never overdue, in any timezone.
++    assert triage_events(events, now=report_by)[0]["overdue"] is False
++    assert triage_events(
++        events, now=datetime(2024, 1, 31, 5, tzinfo=timezone(timedelta(hours=5)))
++    )[0]["overdue"] is False
++    # One instant after the deadline is overdue, in any timezone.
++    assert (
++        triage_events(events, now=report_by + timedelta(microseconds=1))[0]["overdue"]
++        is True
++    )
++    assert triage_events(
++        events,
++        now=datetime(
++            2024, 1, 30, 19, 0, 0, 1, tzinfo=timezone(timedelta(hours=-5))
++        ),
++    )[0]["overdue"] is True
++
++
++def test_unknown_seriousness_and_invalid_links_raise_stable_codes():
++    now = aware(2024, 1, 1)
++    with pytest.raises(ValueError, match="INVALID_SERIOUSNESS"):
++        triage_events([event("A", seriousness="severe")], now=now)
++    with pytest.raises(ValueError, match="INVALID_SERIOUSNESS"):
++        triage_events([event("A", seriousness="Fatal")], now=now)
++    with pytest.raises(ValueError, match="INVALID_FOLLOW_UP_OF"):
++        triage_events([event("A", follow_up_of="   ")], now=now)
++    with pytest.raises(ValueError, match="INVALID_FOLLOW_UP_OF"):
++        triage_events([event("A", follow_up_of=7)], now=now)
++    with pytest.raises(ValueError, match="INVALID_EVENT"):
++        triage_events(["not-a-mapping"], now=now)

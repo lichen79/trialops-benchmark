@@ -1,0 +1,101 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-13 20:31:16
+@@ -1,5 +1,6 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+@@ -86,6 +87,89 @@
+     with pytest.raises(ValueError, match="MIXED_CASE"):
+         triage_events(
+             [event("A"), event("B", follow_up_of="A", event_code="OTHER")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++    with pytest.raises(ValueError, match="MIXED_CASE"):
++        triage_events(
++            [
++                event("A"),
++                event("B", follow_up_of="A", subject_pseudonym="subject-002"),
++            ],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++
++
++@pytest.mark.parametrize(
++    ("seriousness", "days"),
++    [("other", 30), ("hospitalization", 15), ("life_threatening", 7), ("fatal", 7)],
++)
++def test_reporting_offsets_and_overdue_boundaries(seriousness, days):
++    onset = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    deadline = onset + timedelta(days=days)
++    records = [event("A", onset=onset.isoformat(), seriousness=seriousness)]
++
++    at_deadline = triage_events(records, now=deadline)[0]
++    assert at_deadline["report_by"] == deadline.isoformat().replace("+00:00", "Z")
++    assert at_deadline["overdue"] is False
++    assert triage_events(records, now=deadline - timedelta(microseconds=1))[0][
++        "overdue"
++    ] is False
++    assert triage_events(records, now=deadline + timedelta(microseconds=1))[0][
++        "overdue"
++    ] is True
++
++
++def test_seriousness_precedence_uses_the_earliest_onset_for_the_deadline():
++    records = [
++        event("root", onset="2024-01-20T00:00:00Z", seriousness="fatal"),
++        event(
++            "early",
++            follow_up_of="root",
++            onset="2024-01-01T01:00:00+01:00",
++            seriousness="hospitalization",
++        ),
++        event("last", follow_up_of="early", seriousness="life_threatening"),
++    ]
++    [case] = triage_events(records, now=datetime(2024, 2, 1, tzinfo=timezone.utc))
++    assert case["onset"] == "2024-01-01T00:00:00Z"
++    assert case["seriousness"] == "fatal"
++    assert case["report_by"] == "2024-01-08T00:00:00Z"
++
++
++def test_input_order_does_not_affect_output():
++    records = [
++        event("root-b", onset="2024-01-02T00:00:00Z"),
++        event(
++            "child",
++            follow_up_of="root-a",
++            onset="2023-12-31T19:00:00-05:00",
++            seriousness="hospitalization",
++            source="site-a",
++            uncertain=True,
++        ),
++        event("root-a", onset="2024-01-03T00:00:00Z", source="site-c"),
++        event("root-c", onset="2024-01-02T00:00:00Z"),
++    ]
++    expected = triage_events(records, now=datetime(2024, 2, 1, tzinfo=timezone.utc))
++    assert [case["case_id"] for case in expected] == ["root-a", "root-b", "root-c"]
++    for order in permutations(records):
++        assert triage_events(order, now=datetime(2024, 2, 1, tzinfo=timezone.utc)) == expected
++
++
++def test_unknown_seriousness_and_invalid_links_are_rejected():
++    with pytest.raises(ValueError, match="INVALID_SERIOUSNESS"):
++        triage_events(
++            [event("A", seriousness="severe")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++    with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++        triage_events(
++            [event("A", follow_up_of="A")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++    with pytest.raises(ValueError, match="INVALID_FOLLOW_UP_OF"):
++        triage_events(
++            [event("A"), event("B", follow_up_of="")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
+ 

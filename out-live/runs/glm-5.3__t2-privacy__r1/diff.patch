@@ -1,0 +1,257 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/privacy.py b/trialops/privacy.py
+--- a/trialops/privacy.py	2026-11-13 20:17:29
++++ b/trialops/privacy.py	2026-11-14 11:38:41
+@@ -1,15 +1,19 @@
+ """Purpose-scoped, pseudonymized exports of fictional subject records."""
+ 
+ from collections.abc import Iterable, Mapping
+-from datetime import date, datetime
++from datetime import date, datetime, timezone
+ from typing import Any
++import copy
+ import hashlib
+ import hmac
+ import json
+ import re
+ 
++from trialops.governance import apply_reuse_action
+ 
++
+ _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
++_ISO_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+ 
+ 
+ def _field(record: Mapping[str, Any], name: str) -> Any:
+@@ -20,7 +24,7 @@
+ 
+ 
+ def _date(value: Any, field: str) -> date:
+-    if not isinstance(value, str):
++    if not isinstance(value, str) or _ISO_DATE_PATTERN.fullmatch(value) is None:
+         raise ValueError(f"{field} must be an ISO date")
+     try:
+         return date.fromisoformat(value)
+@@ -35,13 +39,89 @@
+     return value
+ 
+ 
++def _validate_country(country: str) -> str:
++    return _text(country, "country")
++
++
++def _validate_purpose(purpose: Any) -> str:
++    purpose = _text(purpose, "purpose", nonempty=True)
++    try:
++        purpose.encode("utf-8")
++    except UnicodeError:
++        raise ValueError("purpose must contain valid Unicode") from None
++    return purpose
++
++
++def _validate_secret(secret: Any) -> str:
++    if not isinstance(secret, str) or not secret:
++        raise ValueError("secret must be a non-empty string")
++    try:
++        secret.encode("utf-8")
++    except UnicodeError:
++        raise ValueError("secret must contain valid Unicode") from None
++    return secret
++
++
++def _parse_consent(consent: Any) -> tuple[str, date, date | None]:
++    if not isinstance(consent, Mapping):
++        raise ValueError("each consent must be a mapping")
++    consent_purpose = _text(_field(consent, "purpose"), "consent purpose")
++    signed_on = _date(_field(consent, "signed_on"), "consent signed_on")
++    withdrawn_value = consent.get("withdrawn_on")
++    withdrawn_on = (
++        None
++        if withdrawn_value is None
++        else _date(withdrawn_value, "consent withdrawn_on")
++    )
++    return consent_purpose, signed_on, withdrawn_on
++
++
++def _parse_subject(
++    subject: Mapping[str, Any],
++) -> tuple[str, list[date], list[tuple[str, date, date | None]], str, int, date]:
++    subject_id = _text(_field(subject, "id"), "id", nonempty=True)
++    if _ID_PATTERN.fullmatch(subject_id) is None:
++        raise ValueError("id must match [A-Za-z0-9_-]+")
++
++    _text(_field(subject, "name"), "name")
++    birth_date = _date(_field(subject, "birth_date"), "birth_date")
++    _text(_field(subject, "email"), "email")
++    country = _validate_country(_text(_field(subject, "country"), "country"))
++
++    visits_value = _field(subject, "visits")
++    if not isinstance(visits_value, list):
++        raise ValueError("visits must be a list")
++    visits = [_date(value, "visits") for value in visits_value]
++    visits.sort()
++
++    consents_value = _field(subject, "consents")
++    if not isinstance(consents_value, list):
++        raise ValueError("consents must be a list")
++    consents = [_parse_consent(consent) for consent in consents_value]
++
++    purge_after = _date(_field(subject, "purge_after"), "purge_after")
++
++    return subject_id, visits, consents, country, birth_date.year, purge_after
++
++
++def _active_consent(
++    consents: list[tuple[str, date, date | None]], purpose: str, on: date
++) -> bool:
++    return any(
++        consent_purpose == purpose
++        and signed_on <= on
++        and (withdrawn_on is None or withdrawn_on > on)
++        for consent_purpose, signed_on, withdrawn_on in consents
++    )
++
++
+ def export_subjects(
+     subjects: Iterable[Mapping[str, Any]], *, purpose: str, secret: str, on: date
+ ) -> dict[str, Any]:
+     """Export only active, unpurged records without direct identifiers."""
+ 
+-    purpose = _text(purpose, "purpose", nonempty=True)
+-    secret = _text(secret, "secret", nonempty=True)
++    purpose = _validate_purpose(purpose)
++    secret = _validate_secret(secret)
+     if not isinstance(on, date) or isinstance(on, datetime):
+         raise ValueError("on must be a date")
+     if isinstance(subjects, (str, bytes, Mapping)) or not isinstance(
+@@ -49,12 +129,6 @@
+     ):
+         raise ValueError("subjects must be an iterable of records")
+ 
+-    try:
+-        secret_bytes = secret.encode("utf-8")
+-        purpose.encode("utf-8")
+-    except UnicodeError:
+-        raise ValueError("purpose and secret must contain valid Unicode") from None
+-
+     rows: list[dict[str, Any]] = []
+     seen_ids: set[str] = set()
+ 
+@@ -62,60 +136,25 @@
+         if not isinstance(subject, Mapping):
+             raise ValueError("each subject must be a mapping")
+ 
+-        subject_id = _text(_field(subject, "id"), "id", nonempty=True)
+-        if _ID_PATTERN.fullmatch(subject_id) is None:
+-            raise ValueError("id must match [A-Za-z0-9_-]+")
++        subject_id, visits, consents, country, birth_year, purge_after = _parse_subject(
++            subject
++        )
+         if subject_id in seen_ids:
+             raise ValueError("DUPLICATE_SUBJECT_ID")
+         seen_ids.add(subject_id)
+ 
+-        _text(_field(subject, "name"), "name")
+-        birth_date = _date(_field(subject, "birth_date"), "birth_date")
+-        _text(_field(subject, "email"), "email")
+-        country = _text(_field(subject, "country"), "country")
+-
+-        visits_value = _field(subject, "visits")
+-        if not isinstance(visits_value, list):
+-            raise ValueError("visits must be a list")
+-        visits = sorted(
+-            (_date(value, "visits") for value in visits_value),
+-            key=lambda value: value,
+-        )
+-
+-        consents_value = _field(subject, "consents")
+-        if not isinstance(consents_value, list):
+-            raise ValueError("consents must be a list")
+-        parsed_consents: list[tuple[str, date, date | None]] = []
+-        for consent in consents_value:
+-            if not isinstance(consent, Mapping):
+-                raise ValueError("each consent must be a mapping")
+-            consent_purpose = _text(_field(consent, "purpose"), "consent purpose")
+-            signed_on = _date(_field(consent, "signed_on"), "consent signed_on")
+-            withdrawn_value = consent.get("withdrawn_on")
+-            withdrawn_on = (
+-                None
+-                if withdrawn_value is None
+-                else _date(withdrawn_value, "consent withdrawn_on")
+-            )
+-            parsed_consents.append((consent_purpose, signed_on, withdrawn_on))
+-
+-        purge_after = _date(_field(subject, "purge_after"), "purge_after")
+-        has_active_consent = any(
+-            consent_purpose == purpose
+-            and signed_on <= on
+-            and (withdrawn_on is None or withdrawn_on > on)
+-            for consent_purpose, signed_on, withdrawn_on in parsed_consents
+-        )
+-        if not has_active_consent or purge_after < on:
++        if not _active_consent(consents, purpose, on) or purge_after < on:
+             continue
+ 
+         message = f"{purpose}:{subject_id}".encode("utf-8")
+-        pseudonym = hmac.new(secret_bytes, message, hashlib.sha256).hexdigest()[:16]
++        pseudonym = hmac.new(
++            secret.encode("utf-8"), message, hashlib.sha256
++        ).hexdigest()[:16]
+         rows.append(
+             {
+                 "pseudonym": pseudonym,
+                 "country": country,
+-                "birth_year": birth_date.year,
++                "birth_year": birth_year,
+                 "visits": [value.isoformat() for value in visits],
+             }
+         )
+@@ -142,3 +181,49 @@
+     }
+ 
+ 
++def _utc_now(now: Any) -> datetime:
++    if not isinstance(now, datetime):
++        raise ValueError("INVALID_NOW")
++    try:
++        if now.tzinfo is None or now.utcoffset() is None:
++            raise ValueError("INVALID_NOW")
++        return now.astimezone(timezone.utc)
++    except (OverflowError, ValueError) as exc:
++        raise ValueError("INVALID_NOW") from exc
++
++
++def execute_reuse_export(
++    request: dict[str, object],
++    subjects: Iterable[Mapping[str, Any]],
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, object]:
++    """Run one governed, pseudonymized export of the approved reuse request.
++
++    Governance is the single gate: the subject records are only read once the
++    approved snapshot has passed every governance check, so rejected, expired,
++    or already executed requests never consume them.  Export failures surface
++    as the governance ``EXECUTION_FAILED`` error and leave the approved request
++    and its history untouched.
++    """
++
++    if not isinstance(request, dict):
++        raise TypeError("request must be a dict")
++    now_utc = _utc_now(now)
++    on = now_utc.date()
++
++    def _execute(approved: dict[str, object]) -> dict[str, Any]:
++        purpose = approved.get("purpose")
++        if not isinstance(purpose, str) or not purpose.strip():
++            raise ValueError("approved request must state a non-empty purpose")
++        try:
++            # Snapshot the caller's records so the export cannot observe or
++            # mutate them, and so a repeated execution never re-reads them.
++            snapshot = copy.deepcopy(list(subjects))
++        except Exception:
++            raise ValueError("INVALID_SUBJECTS") from None
++        return export_subjects(snapshot, purpose=purpose, secret=secret, on=on)
++
++    return apply_reuse_action(request, "execute", actor, now, executor=_execute)

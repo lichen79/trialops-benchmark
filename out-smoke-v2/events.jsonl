@@ -1,0 +1,2 @@
+{"t": 1794650915.507, "kind": "run_start", "run_id": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 1}
+{"t": 1794650934.119, "kind": "run_end", "run_id": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 1, "passed": true, "stop": "finish", "calls": 5, "usd": 0.075831, "wall_s": 18.26}

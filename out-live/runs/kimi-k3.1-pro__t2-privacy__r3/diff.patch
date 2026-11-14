@@ -1,0 +1,218 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_privacy.py b/tests/test_privacy.py
+--- a/tests/test_privacy.py	2026-11-13 14:56:26
++++ b/tests/test_privacy.py	2026-11-14 11:16:09
+@@ -1,12 +1,12 @@
+ from copy import deepcopy
+-from datetime import date
++from datetime import date, datetime, timedelta, timezone
+ import hashlib
+ import hmac
+ import json
+ 
+ import pytest
+ 
+-from trialops.privacy import export_subjects
++from trialops.privacy import execute_reuse_export, export_subjects
+ 
+ 
+ ON = date(2024, 6, 15)
+@@ -87,6 +87,26 @@
+     assert result["manifest"]["count"] == 1
+ 
+ 
++def test_consent_signing_and_retention_expiry_boundaries():
++    signed_later = make_subject("signed-later")
++    signed_later["consents"][0]["signed_on"] = "2024-06-16"
++    signed_on_day = make_subject("signed-on-day")
++    retained_on_day = make_subject("retained-on-day", purge_after="2024-06-15")
++    purged_before = make_subject("purged-before", purge_after="2024-06-14")
++
++    result = export_subjects(
++        [signed_later, signed_on_day, retained_on_day, purged_before],
++        purpose="research",
++        secret="test-secret",
++        on=ON,
++    )
++
++    assert {row["pseudonym"] for row in result["rows"]} == {
++        pseudonym("signed-on-day"),
++        pseudonym("retained-on-day"),
++    }
++
++
+ def test_empty_input_has_canonical_empty_manifest():
+     assert export_subjects([], purpose="research", secret="test-secret", on=ON) == {
+         "rows": [],
+@@ -158,3 +178,122 @@
+             )
+         assert "id" in str(caught.value)
+         assert invalid_id not in str(caught.value)
++
++
++def reuse_request(status="approved", **changes):
++    purpose = changes.get("purpose", "research")
++    value = {
++        "id": "reuse-001",
++        "requester": "alice",
++        "reviewer": "bob",
++        "purpose": purpose,
++        "status": status,
++        "retention_until": "2025-06-30",
++        "approval_expires_on": "2025-02-01",
++        "privacy_plan": {
++            "algorithm": "hmac-sha256",
++            "domain": purpose,
++            "fields": ["pseudonym", "country", "birth_year", "visits"],
++        },
++        "metadata": {
++            "representative": True,
++            "complete": True,
++            "quality_score": 0.95,
++        },
++        "history": [],
++    }
++    value.update(changes)
++    return value
++
++
++def test_execute_reuse_export_integrates_and_uses_the_utc_date(monkeypatch):
++    approved = reuse_request()
++    original = deepcopy(approved)
++    subjects = [make_subject("sensitive-id")]
++    original_subjects = deepcopy(subjects)
++    now = datetime(2025, 1, 1, 23, 30, tzinfo=timezone(timedelta(hours=2)))
++    expected = export_subjects(
++        subjects, purpose="research", secret="test-secret", on=date(2025, 1, 1)
++    )
++    calls = []
++
++    def observing_export(records, *, purpose, secret, on):
++        calls.append((records, purpose, secret, on))
++        return export_subjects(records, purpose=purpose, secret=secret, on=on)
++
++    monkeypatch.setattr("trialops.privacy.export_subjects", observing_export)
++    executed = execute_reuse_export(
++        approved, subjects, actor="alice", secret="test-secret", now=now
++    )
++
++    assert calls == [(subjects, "research", "test-secret", date(2025, 1, 1))]
++    assert executed["status"] == "executed"
++    assert executed["execution_result"] == expected
++    assert executed["history"][-1] == {
++        "action": "execute",
++        "actor": "alice",
++        "at": "2025-01-01T21:30:00Z",
++    }
++    assert approved == original
++    assert subjects == original_subjects
++    serialized = canonical(executed)
++    for identifier in ("sensitive-id", "Fictional Person", "person@example.test", "test-secret"):
++        assert identifier not in serialized
++
++
++def test_reuse_export_governance_rejection_does_not_consume_subjects():
++    consumed = []
++
++    def records():
++        consumed.append(True)
++        yield make_subject()
++
++    with pytest.raises(ValueError, match="INVALID_STATE"):
++        execute_reuse_export(
++            reuse_request("executed"),
++            records(),
++            actor="alice",
++            secret="test-secret",
++            now=datetime(2025, 1, 1, tzinfo=timezone.utc),
++        )
++    assert consumed == []
++
++
++def test_reuse_export_failure_rolls_back_and_repeated_execution_does_not_consume():
++    approved = reuse_request()
++    snapshot = deepcopy(approved)
++    consumed = []
++
++    def records():
++        consumed.append(True)
++        yield make_subject("sensitive-id", birth_date="not-a-date")
++
++    secret = "test-secret"
++    with pytest.raises(ValueError) as caught:
++        execute_reuse_export(
++            approved,
++            records(),
++            actor="alice",
++            secret=secret,
++            now=datetime(2025, 1, 1, tzinfo=timezone.utc),
++        )
++    assert str(caught.value) == "EXECUTION_FAILED"
++    assert "sensitive-id" not in str(caught.value)
++    assert secret not in str(caught.value)
++    assert approved == snapshot
++    assert consumed == [True]
++
++    executed = deepcopy(approved)
++    executed["status"] = "executed"
++    consumed.clear()
++    with pytest.raises(ValueError, match="INVALID_STATE") as repeated:
++        execute_reuse_export(
++            executed,
++            records(),
++            actor="alice",
++            secret=secret,
++            now=datetime(2025, 1, 2, tzinfo=timezone.utc),
++        )
++    assert str(repeated.value) == "INVALID_STATE"
++    assert consumed == []
++    assert executed["history"] == []
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/privacy.py b/trialops/privacy.py
+--- a/trialops/privacy.py	2026-11-13 20:17:29
++++ b/trialops/privacy.py	2026-11-14 11:15:56
+@@ -1,7 +1,7 @@
+ """Purpose-scoped, pseudonymized exports of fictional subject records."""
+ 
+ from collections.abc import Iterable, Mapping
+-from datetime import date, datetime
++from datetime import date, datetime, timezone
+ from typing import Any
+ import hashlib
+ import hmac
+@@ -9,7 +9,7 @@
+ import re
+ 
+ 
+-_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
++_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z", re.ASCII)
+ 
+ 
+ def _field(record: Mapping[str, Any], name: str) -> Any:
+@@ -142,3 +142,28 @@
+     }
+ 
+ 
++def execute_reuse_export(
++    request: dict[str, object],
++    subjects: Iterable[Mapping[str, Any]],
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, object]:
++    """Execute an approved reuse request with its governed privacy export."""
++
++    # Import lazily so the standalone export remains usable without importing
++    # the governance workflow, and governance validation precedes consumption.
++    from .governance import apply_reuse_action
++
++    def executor(approved_request: dict[str, object]) -> dict[str, Any]:
++        return export_subjects(
++            subjects,
++            purpose=approved_request["purpose"],
++            secret=secret,
++            on=now.astimezone(timezone.utc).date(),
++        )
++
++    return apply_reuse_action(
++        request, "execute", actor, now, executor=executor
++    )

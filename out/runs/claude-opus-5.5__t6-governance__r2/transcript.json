@@ -1,0 +1,184 @@
+[
+ {
+  "call": 1,
+  "t": 2.22,
+  "content": "I'll start by inspecting the repository layout and existing code.",
+  "tool_calls": [
+   {
+    "id": "tooluse_9Ua2YaQTVMv8v2ZyQ85HxX",
+    "name": "list_files",
+    "arguments": "{\"path\": \".\"}"
+   }
+  ],
+  "usage": {
+   "input": 1902,
+   "output": 82,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 4.98,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_wXyk80xTbGpbH3N1ookUkx",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/governance.py\"}"
+   },
+   {
+    "id": "tooluse_f6cbs8HPsGOtviQbRcwrno",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_governance.py\"}"
+   },
+   {
+    "id": "tooluse_pIIkLuYj6AEwPO4m3hVrvj",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 2130,
+   "output": 158,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "\"\"\"Synthetic data-reuse workflow with explicit, deterministic guardrails.\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport math\nfrom collections.abc import Mapping\nfrom datetime import date, datetime, timedelta, timezone\n\n_ACTIONS = {\"submit\", \"approve\", \"reject\", \"execute\", \"expire\"}\n_PRIVACY_FIELDS = [\"pseudonym\", \"country\", \"birth_year\", \"visits\"]\n\n\ndef _aware_utc(now: object) -> datetime:\n    if not isinstance(now, datetime):\n        raise ValueError(\"INVALID_NOW\")\n    try:\n        if now.tzinfo is None or now.utcoffset() is None:\n            raise ValueError(\"INVALID_NOW\")\n        return now.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(\"INVALID_NOW\") from exc\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n    states = (expected,) if isinstance(expected, str) else expected\n    if request.get(\"status\") not in states:\n        raise ValueError(\"INVALID_STATE\")\n\n\ndef _require_actor(actor: object, expected: object, code: str) -> None:\n    if actor != expected:\n        raise PermissionError(code)\n\n\ndef _date_field(request: Mapping[str, object], field: str, error_code: str) -> date:\n    value = request.get(field)\n    if not isinstance(value, str):\n        raise ValueError(error_code)\n    try:\n        return date.fromisoformat(value)\n    except ValueError as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _valid_quality_score(value: object) -> bool:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return False\n    return math.isfinite(value) and value >= 0.95\n\n\ndef _check_policy(request: Mapping[str, object], now_utc: datetime) -> None:\n    purpose = request.get(\"purpose\")\n    expected_privacy_plan = {\n        \"algorithm\": \"hmac-sha256\",\n        \"domain\": purpose,\n        \"fields\": _PRIVACY_FIELDS,\n    }\n    if request.get(\"privacy_plan\") != expected_privacy_plan:\n        raise ValueError(\"PSEUDONYMIZATION_REQUIRED\")\n\n    metadata = request.get(\"metadata\")\n    if (\n        not isinstance(metadata, Mapping)\n        or metadata.get(\"representative\") is not True\n        or metadata.get(\"complete\") is not True\n        or not _valid_quality_score(metadata.get(\"quality_score\"))\n        or not isinstance(purpose, str)\n        or not purpose.strip()\n    ):\n        raise ValueError(\"METADATA_REQUIRED\")\n\n    retention_until = _date_field(request, \"retention_until\", \"RETENTION_EXPIRED\")\n    if now_utc.date() > retention_until:\n        raise ValueError(\"RETENTION_EXPIRED\")\n\n\ndef _check_approval_current(request: Mapping[str, object], now_utc: datetime) -> None:\n    expires_on = _date_field(request, \"approval_expires_on\", \"APPROVAL_EXPIRED\")\n    if now_utc.date() > expires_on:\n        raise ValueError(\"APPROVAL_EXPIRED\")\n\n\ndef apply_reuse_action(\n    request: dict[str, object],\n    action: str,\n    actor: str,\n    now: datetime,",
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\n\nimport pytest\n\nfrom trialops.governance import apply_reuse_action\n\n\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\n\n\ndef request(status=\"draft\", **changes):\n    purpose = changes.get(\"purpose\", \"synthetic methods research\")\n    value = {\n        \"id\": \"reuse-001\",\n        \"requester\": \"alice\",\n        \"reviewer\": \"bob\",\n        \"purpose\": purpose,\n        \"status\": status,\n        \"retention_until\": \"2025-06-30\",\n        \"privacy_plan\": {\n            \"algorithm\": \"hmac-sha256\",\n            \"domain\": purpose,\n            \"fields\": [\"pseudonym\", \"country\", \"birth_year\", \"visits\"],\n        },\n        \"metadata\": {\n            \"representative\": True,\n            \"complete\": True,\n            \"quality_score\": 0.95,\n        },\n        \"history\": [],\n    }\n    value.update(changes)\n    return value\n\n\ndef successful_executor(approved_request):\n    return {\"receipt\": \"synthetic-execution-001\"}\n\n\ndef test_full_workflow_normalizes_history_and_deep_copies():\n    original = request(history=[{\"action\": \"imported\", \"nested\": {\"value\": 1}}])\n    snapshot = deepcopy(original)\n    executor_calls = []\n\n    def executor(approved_request):\n        executor_calls.append(approved_request)\n        approved_request[\"metadata\"][\"quality_score\"] = 0\n        return {\"rows\": 3}\n\n    submitted = apply_reuse_action(original, \"submit\", \"alice\", NOW)\n    assert original == snapshot\n    assert submitted is not original\n    assert submitted[\"metadata\"] is not original[\"metadata\"]\n    assert submitted[\"history\"][0] is not original[\"history\"][0]\n    assert submitted[\"history\"][-1] == {\n        \"action\": \"submit\",\n        \"actor\": \"alice\",\n        \"at\": \"2025-01-01T12:00:00Z\",\n    }\n\n    approved = apply_reuse_action(submitted, \"approve\", \"bob\", NOW + timedelta(days=1))\n    assert approved[\"approval_expires_on\"] == \"2025-02-01\"\n    executed = apply_reuse_action(\n        approved, \"execute\", \"alice\", NOW + timedelta(days=2), executor\n    )\n    assert executed[\"status\"] == \"executed\"\n    assert executed[\"execution_result\"] == {\"rows\": 3}\n    assert len(executor_calls) == 1\n    assert executor_calls[0][\"status\"] == \"approved\"\n    assert approved[\"status\"] == \"approved\"\n    assert approved[\"metadata\"][\"quality_score\"] == 0.95\n    assert \"execution_result\" not in approved\n    assert [entry[\"action\"] for entry in executed[\"history\"][-3:]] == [\n        \"submit\",\n        \"approve\",\n        \"execute\",\n    ]\n    assert [entry[\"at\"] for entry in executed[\"history\"][-3:]] == [\n        \"2025-01-01T12:00:00Z\",\n        \"2025-01-02T12:00:00Z\",\n        \"2025-01-03T12:00:00Z\",\n    ]\n\n\n@pytest.mark.parametrize(\n    (\"status\", \"action\", \"actor\"),\n    [\n        (\"draft\", \"submit\", \"bob\"),\n        (\"submitted\", \"approve\", \"alice\"),\n        (\"submitted\", \"reject\", \"alice\"),\n        (\"approved\", \"execute\", \"bob\"),\n    ],\n)\ndef test_invalid_roles_raise_permission_error(status, action, actor):\n    candidate = request(status,",
+   "\"\"\"Purpose-scoped, pseudonymized exports of fictional subject records.\"\"\"\n\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime\nfrom typing import Any\nimport hashlib\nimport hmac\nimport json\nimport re\n\n\n_ID_PATTERN = re.compile(r\"[A-Za-z0-9_-]+\\Z\")\n\n\ndef _field(record: Mapping[str, Any], name: str) -> Any:\n    try:\n        return record[name]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {name}\") from None\n\n\ndef _date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _text(value: Any, field: str, *, nonempty: bool = False) -> str:\n    if not isinstance(value, str) or (nonempty and not value):\n        qualifier = \"a non-empty\" if nonempty else \"a\"\n        raise ValueError(f\"{field} must be {qualifier} string\")\n    return value\n\n\ndef export_subjects(\n    subjects: Iterable[Mapping[str, Any]], *, purpose: str, secret: str, on: date\n) -> dict[str, Any]:\n    \"\"\"Export only active, unpurged records without direct identifiers.\"\"\"\n\n    purpose = _text(purpose, \"purpose\", nonempty=True)\n    secret = _text(secret, \"secret\", nonempty=True)\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n    if isinstance(subjects, (str, bytes, Mapping)) or not isinstance(\n        subjects, Iterable\n    ):\n        raise ValueError(\"subjects must be an iterable of records\")\n\n    try:\n        secret_bytes = secret.encode(\"utf-8\")\n        purpose.encode(\"utf-8\")\n    except UnicodeError:\n        raise ValueError(\"purpose and secret must contain valid Unicode\") from None\n\n    rows: list[dict[str, Any]] = []\n    seen_ids: set[str] = set()\n\n    for subject in subjects:\n        if not isinstance(subject, Mapping):\n            raise ValueError(\"each subject must be a mapping\")\n\n        subject_id = _text(_field(subject, \"id\"), \"id\", nonempty=True)\n        if _ID_PATTERN.fullmatch(subject_id) is None:\n            raise ValueError(\"id must match [A-Za-z0-9_-]+\")\n        if subject_id in seen_ids:\n            raise ValueError(\"DUPLICATE_SUBJECT_ID\")\n        seen_ids.add(subject_id)\n\n        _text(_field(subject, \"name\"), \"name\")\n        birth_date = _date(_field(subject, \"birth_date\"), \"birth_date\")\n        _text(_field(subject, \"email\"), \"email\")\n        country = _text(_field(subject, \"country\"), \"country\")\n\n        visits_value = _field(subject, \"visits\")\n        if not isinstance(visits_value, list):\n            raise ValueError(\"visits must be a list\")\n        visits = sorted(\n            (_date(value, \"visits\") for value in visits_value),\n            key=lambda value: value,\n        )\n\n        consents_value = _field(subject, \"consents\")\n        if not isinstance(consents_value, list):\n            raise ValueError"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 15.02,
+  "content": "The implementation looks mostly complete already. Let me run the tests to check where it stands.",
+  "tool_calls": [
+   {
+    "id": "tooluse_R8e9egM9djnMeuB8HCjuSp",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 9180,
+   "output": 875,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "exit code 0\n...............................................                          [100%]\n47 passed in 0.03s\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 28.92,
+  "content": "The code already implements most of the spec and all 47 tests pass. Before adding the missing tests, let me check the README and the rest of the package for related docs or usages.",
+  "tool_calls": [
+   {
+    "id": "tooluse_4xWJOHVvPNiOdZGqNi6npO",
+    "name": "read_file",
+    "arguments": "{\"path\": \"README.md\"}"
+   },
+   {
+    "id": "tooluse_SPO1BIVSFUIPrtMQazdhke",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/__init__.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 9268,
+   "output": 1281,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n",
+   "\"\"\"Synthetic trial-operations helpers used by the Bedrock coding benchmark.\"\"\"\n"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 58.91,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_nBT0T208lsIXLr7Skp8O6W",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"trialops/governance.py\", \"old_string\": \"        _require_state(result, \\\"approved\\\")\\n        _check_approval_current(result, now_utc)\", \"new_string\": \"        _require_state(result, \\\"approved\\\")\\n        if result.get(\\\"requester\\\") == result.get(\\\"reviewer\\\"):\\n            raise ValueError(\\\"SELF_REVIEW\\\")\\n        _check_approval_current(result, now_utc)\"}"
+   },
+   {
+    "id": "tooluse_xs4cTPDB8uW1HpPpTwVmWB",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_governance.py\", \"old_string\": \"def test_invalid_states_and_naive_now_are_rejected():\", \"new_string\": \"def test_execution_rechecks_separation_privacy_metadata_and_retention():\\n    base = dict(approval_expires_on=\\\"2025-02-01\\\")\\n    calls = []\\n\\n    def executor(approved_request):\\n        calls.append(1)\\n        return {}\\n\\n    with pytest.raises(ValueError, match=\\\"SELF_REVIEW\\\"):\\n        apply_reuse_action(\\n            request(\\\"approved\\\", reviewer=\\\"alice\\\", **base), \\\"execute\\\", \\\"alice\\\", NOW, executor\\n        )\\n\\n    legacy = request(\\\"approved\\\", **base)\\n    del legacy[\\\"privacy_plan\\\"]\\n    legacy[\\\"pseudonymized\\\"] = True\\n    with pytest.raises(ValueError, match=\\\"PSEUDONYMIZATION_REQUIRED\\\"):\\n        apply_reuse_action(legacy, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    wrong_domain = request(\\\"approved\\\", **base)\\n    wrong_domain[\\\"privacy_plan\\\"][\\\"domain\\\"] = \\\"other purpose\\\"\\n    with pytest.raises(ValueError, match=\\\"PSEUDONYMIZATION_REQUIRED\\\"):\\n        apply_reuse_action(wrong_domain, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    extra_field = request(\\\"approved\\\", **base)\\n    extra_field[\\\"privacy_plan\\\"][\\\"fields\\\"].append(\\\"email\\\")\\n    with pytest.raises(ValueError, match=\\\"PSEUDONYMIZATION_REQUIRED\\\"):\\n        apply_reuse_action(extra_field, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    missing_metadata = request(\\\"approved\\\", **base)\\n    del missing_metadata[\\\"metadata\\\"][\\\"representative\\\"]\\n    with pytest.raises(ValueError, match=\\\"METADATA_REQUIRED\\\"):\\n        apply_reuse_action(missing_metadata, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    no_metadata = request(\\\"approved\\\", **base)\\n    del no_metadata[\\\"metadata\\\"]\\n    with pytest.raises(ValueError, match=\\\"METADATA_REQUIRED\\\"):\\n        apply_reuse_action(no_metadata, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    retention = request(\\\"approved\\\", retention_until=\\\"2024-12-31\\\", **base)\\n    with pytest.raises(ValueError, match=\\\"RETENTION_EXPIRED\\\"):\\n        apply_reuse_action(retention, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n\\n    assert calls == []\\n\\n\\ndef test_missing_metadata_and_boolean_pseudonymization_block_approval():\\n    legacy = request(\\\"submitted\\\")\\n    del legacy[\\\"privacy_plan\\\"]\\n    legacy[\\\"pseudonymized\\\"] = True\\n    with pytest.raises(ValueError, match=\\\"PSEUDONYMIZATION_REQUIRED\\\"):\\n        apply_reuse_action(legacy, \\\"approve\\\", \\\"bob\\\", NOW)\\n\\n    for key in (\\\"representative\\\", \\\"complete\\\", \\\"quality_score\\\"):\\n        candidate = request(\\\"submitted\\\")\\n        del candidate[\\\"metadata\\\"][key]\\n        snapshot = deepcopy(candidate)\\n        with pytest.raises(ValueError, match=\\\"METADATA_REQUIRED\\\"):\\n            apply_reuse_action(candidate, \\\"approve\\\", \\\"bob\\\", NOW)\\n        assert candidate == snapshot\\n\\n    boolean_score = request(\\\"submitted\\\")\\n    boolean_score[\\\"metadata\\\"][\\\"quality_score\\\"] = True\\n    with pytest.raises(ValueError, match=\\\"METADATA_REQUIRED\\\"):\\n        apply_reuse_action(boolean_score, \\\"approve\\\", \\\"bob\\\", NOW)\\n\\n\\ndef test_repeated_execution_is_invalid_state_without_executor_call():\\n    approved = request(\\\"approved\\\", approval_expires_on=\\\"2025-02-01\\\")\\n    calls = []\\n\\n    def executor(approved_request):\\n        calls.append(1)\\n        return {\\\"ok\\\": True}\\n\\n    executed = apply_reuse_action(approved, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n    snapshot = deepcopy(executed)\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\"):\\n        apply_reuse_action(executed, \\\"execute\\\", \\\"alice\\\", NOW, executor)\\n    assert calls == [1]\\n    assert executed == snapshot\\n    assert len(executed[\\\"history\\\"]) == 1\\n\\n\\ndef test_non_dict_executor_result_fails_without_reporting_executed():\\n    approved = request(\\\"approved\\\", approval_expires_on=\\\"2025-02-01\\\")\\n    snapshot = deepcopy(approved)\\n    with pytest.raises(ValueError, match=\\\"EXECUTION_FAILED\\\"):\\n        apply_reuse_action(approved, \\\"execute\\\", \\\"alice\\\", NOW, lambda r: [\\\"rows\\\"])\\n    assert approved == snapshot\\n    with pytest.raises(ValueError, match=\\\"EXECUTOR_REQUIRED\\\"):\\n        apply_reuse_action(approved, \\\"execute\\\", \\\"alice\\\", NOW, \\\"not callable\\\")\\n\\n\\ndef test_execution_result_is_isolated_from_executor():\\n    approved = request(\\\"approved\\\", approval_expires_on=\\\"2025-02-01\\\")\\n    payload = {\\\"rows\\\": [1, 2]}\\n    executed = apply_reuse_action(approved, \\\"execute\\\", \\\"alice\\\", NOW, lambda r: payload)\\n    payload[\\\"rows\\\"].append(3)\\n    assert executed[\\\"execution_result\\\"] == {\\\"rows\\\": [1, 2]}\\n\\n\\ndef test_failed_actions_are_atomic_and_role_checks_precede_state():\\n    submitted = request(\\\"submitted\\\", retention_until=\\\"2024-12-31\\\")\\n    snapshot = deepcopy(submitted)\\n    with pytest.raises(ValueError, match=\\\"RETENTION_EXPIRED\\\"):\\n        apply_reuse_action(submitted, \\\"approve\\\", \\\"bob\\\", NOW)\\n    assert submitted == snapshot\\n    assert \\\"approval_expires_on\\\" not in submitted\\n\\n    with pytest.raises(PermissionError):\\n        apply_reuse_action(request(\\\"submitted\\\"), \\\"submit\\\", \\\"mallory\\\", NOW)\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\"):\\n        apply_reuse_action(request(\\\"draft\\\"), \\\"approve\\\", \\\"bob\\\", NOW)\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\"):\\n        apply_reuse_action(request(\\\"draft\\\"), \\\"expire\\\", \\\"system\\\", NOW)\\n\\n\\ndef test_rejection_and_history_chronology_with_offset_timezone():\\n    plus_two = timezone(timedelta(hours=2))\\n    first = datetime(2025, 1, 1, 9, 30, tzinfo=plus_two)\\n    submitted = apply_reuse_action(request(), \\\"submit\\\", \\\"alice\\\", first)\\n    rejected = apply_reuse_action(\\n        submitted, \\\"reject\\\", \\\"bob\\\", first + timedelta(hours=1, seconds=5)\\n    )\\n    assert rejected[\\\"status\\\"] == \\\"rejected\\\"\\n    assert rejected[\\\"history\\\"] == [\\n        {\\\"action\\\": \\\"submit\\\", \\\"actor\\\": \\\"alice\\\", \\\"at\\\": \\\"2025-01-01T07:30:00Z\\\"},\\n        {\\\"action\\\": \\\"reject\\\", \\\"actor\\\": \\\"bob\\\", \\\"at\\\": \\\"2025-01-01T08:30:05Z\\\"},\\n    ]\\n    assert submitted[\\\"history\\\"] == rejected[\\\"history\\\"][:1]\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\"):\\n        apply_reuse_action(rejected, \\\"approve\\\", \\\"bob\\\", first)\\n\\n\\ndef test_invalid_states_and_naive_now_are_rejected():\"}"
+   },
+   {
+    "id": "tooluse_u1f5QG12eAIJBbzXFw6fCF",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 9669,
+   "output": 3737,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "edited trialops/governance.py",
+   "edited tests/test_governance.py",
+   "exit code 0\n......................................................                   [100%]\n54 passed in 0.04s\n"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 69.51,
+  "content": "`apply_reuse_action` now does what you asked, and the full suite passes (54 tests: the 47 already there plus 7 new ones).\n\n**What was already there:** `trialops/governance.py` already implemented almost all of this before I started, including the exact `privacy_plan` check, the `executor` parameter, the error codes, deep copies, UTC history timestamps and all-or-nothing failures. So I made one small code change and spent most of the effort on tests.\n\n**The code change:** execution now also re-checks separation of duties. If the requester and reviewer are the same person, `execute` fails with `SELF_REVIEW` before the executor is called. Your spec said execution needs \"all the same privacy/metadata checks\" as approval; I read that as including the requester ≠ reviewer rule, though you could read it more narrowly.\n\n**New tests** in `tests/test_governance.py`:\n- **Checks at execution:** a self-reviewed request, the old `pseudonymized: True` boolean, a privacy plan with the wrong domain or an extra field, missing metadata, and expired retention are each refused, and the executor is never called.\n- **Missing metadata at approval:** each metadata field removed in turn, and a quality score of `True` instead of a number. Each is rejected and the caller's input is left unchanged.\n- **Repeated execution:** a second `execute` fails with `INVALID_STATE`, with no second executor call and no new history entry.\n- **Bad executors:** an executor that returns something other than a dict fails with `EXECUTION_FAILED`, and nothing is marked executed. Passing something that isn't callable raises `EXECUTOR_REQUIRED`.\n- **Copying:** the stored `execution_result` is a copy, so later changes to what the executor returned don't affect it.\n- **No partial changes on failure:** a rejected approval leaves the input untouched and adds no `approval_expires_on`.\n- **History order:** a submit followed by a reject, using a +02:00 timezone, records timestamps as UTC `Z` in the right order.\n\n**Behaviours worth knowing:**\n- **`EXECUTOR_REQUIRED` code:** a missing executor gives this code, which isn't in your list. It was already in the code and the existing tests, so I kept it.\n- **Role before state:** the actor is checked before the status. For example, the wrong person trying to execute an already-executed request gets a `PermissionError`, not `INVALID_STATE`. Repeated execution by the requester gives `INVALID_STATE` as you specified.",
+  "tool_calls": [],
+  "usage": {
+   "input": 12539,
+   "output": 943,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "end_turn"
+ },
+ {
+  "call": 7,
+  "t": 74.37,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_Khpj8WUwY8JWBCXRwRhq7s",
+    "name": "finish",
+    "arguments": "{\"summary\": \"`apply_reuse_action` in `trialops/governance.py` now meets the request; the full suite passes (54 tests). Most of it was already in the file: the exact `privacy_plan` check, the `executor` parameter, the error codes, deep copies, UTC history and all-or-nothing failures. My one code change: `execute` now also refuses a request whose requester and reviewer are the same (`SELF_REVIEW`) before calling the executor. I read \\\"all the same checks\\\" as including that rule; a narrower reading is possible. I added 7 tests covering every check at execution time (including the old `pseudonymized` boolean), missing metadata at approval, repeated execution with no second executor call, executors that fail or return a non-dict, copying of `execution_result`, inputs left unchanged on failure, and history order across timezones. Note: a missing executor raises `EXECUTOR_REQUIRED`, which isn't in your list but was already in the code and tests. Also, the actor is checked before the status, so the wrong person gets `PermissionError` rather than `INVALID_STATE`.\"}"
+   }
+  ],
+  "usage": {
+   "input": 13396,
+   "output": 396,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "ok"
+  ]
+ }
+]

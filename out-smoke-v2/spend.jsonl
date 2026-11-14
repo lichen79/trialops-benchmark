@@ -1,0 +1,5 @@
+{"t": 1794650918.199, "run": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "usage": {"input": 913, "output": 92, "reasoning": 41, "cache_read": 0, "cache_write": 0}, "usd": 0.005492, "total_usd": 0.005492}
+{"t": 1794650920.884, "run": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "usage": {"input": 1082, "output": 187, "reasoning": 0, "cache_read": 906, "cache_write": 0}, "usd": 0.004625, "total_usd": 0.010117}
+{"t": 1794650923.041, "run": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "usage": {"input": 3943, "output": 86, "reasoning": 36, "cache_read": 1075, "cache_write": 0}, "usd": 0.013407, "total_usd": 0.023524}
+{"t": 1794650927.56, "run": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "usage": {"input": 4043, "output": 727, "reasoning": 604, "cache_read": 3936, "cache_write": 0}, "usd": 0.015755, "total_usd": 0.039279}
+{"t": 1794650933.774, "run": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "usage": {"input": 7322, "output": 1130, "reasoning": 1029, "cache_read": 4036, "cache_write": 0}, "usd": 0.036551, "total_usd": 0.075831}

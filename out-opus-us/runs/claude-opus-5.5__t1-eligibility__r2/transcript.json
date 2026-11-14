@@ -1,0 +1,224 @@
+[
+ {
+  "call": 1,
+  "t": 2.01,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_cdqONAEJZRtEkOUs9b8Hmf",
+    "name": "list_files",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 1594,
+   "output": 39,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 4.41,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_Qgaekwkr9kFegyiepTf377",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\"}"
+   },
+   {
+    "id": "tooluse_6uFnmNZj3iA3muAEXSwx5d",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_eligibility.py\"}"
+   },
+   {
+    "id": "tooluse_p7rspqewxFvz1YGIj0N1NA",
+    "name": "read_file",
+    "arguments": "{\"path\": \"README.md\"}"
+   }
+  ],
+  "usage": {
+   "input": 1781,
+   "output": 156,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "\"\"\"Deterministic eligibility checks for synthetic screening data.\"\"\"\n\nfrom datetime import date, datetime\nimport math\nfrom collections.abc import Mapping\nfrom typing import Any\n\n\ndef _value(mapping: Mapping[str, Any], key: str, prefix: str) -> Any:\n    try:\n        return mapping[key]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {prefix}.{key}\") from None\n\n\ndef _mapping(value: Any, field: str) -> Mapping[str, Any]:\n    if not isinstance(value, Mapping):\n        raise ValueError(f\"{field} must be a mapping\")\n    return value\n\n\ndef _iso_date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value:\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\ndef _string_list(value: Any, field: str) -> list[str]:\n    if not isinstance(value, list):\n        raise ValueError(f\"{field} must be a list\")\n    for item in value:\n        _string(item, field)\n    return value\n\n\ndef _number(value: Any, field: str) -> int | float:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        raise ValueError(f\"{field} must be a number\")\n    if isinstance(value, float) and not math.isfinite(value):\n        raise ValueError(f\"{field} must be finite\")\n    return value\n\n\ndef _age(birth_date: date, on: date) -> int:\n    return on.year - birth_date.year - (\n        (on.month, on.day) < (birth_date.month, birth_date.day)\n    )\n\n\ndef evaluate_subject(\n    subject: Mapping[str, Any], protocol: Mapping[str, Any], on: date\n) -> dict[str, Any]:\n    \"\"\"Evaluate one fictional subject against a synthetic protocol.\n\n    The most recent consent signed on or before ``on`` is selected, including\n    when that consent is retired or has the wrong version. All returned reason\n    codes follow the protocol-defined ordering.\n    \"\"\"\n\n    subject = _mapping(subject, \"subject\")\n    protocol = _mapping(protocol, \"protocol\")\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n\n    birth_date = _iso_date(_value(subject, \"birth_date\", \"subject\"), \"subject.birth_date\")\n    consents = _value(subject, \"consents\", \"subject\")\n    subject_labs = _mapping(_value(subject, \"labs\", \"subject\"), \"subject.labs\")\n    flags = set(\n        _string_list(_value(subject, \"flags\", \"subject\"), \"subject.flags\")\n    )\n\n    min_age = _value(protocol, \"min_age\", \"protocol\")\n    max_age = _value(protocol, \"max_age\", \"protocol\")\n    for value, field in ((min_age, \"protocol.min_age\"), (max_age, \"protocol.max_age\")):\n        if isinstance(value, bool) or not isinstance(value, int) or value < 0:\n            raise ValueError(f\"{field} must be a nonnegative integer\")\n",
+   "from datetime import date\n\nimport pytest\n\nfrom trialops.eligibility import evaluate_subject\n\n\ndef make_protocol():\n    return {\n        \"min_age\": 18,\n        \"max_age\": 30,\n        \"required_consent_version\": \"v2\",\n        \"consent_valid_from\": \"2024-01-01\",\n        \"labs\": {\"A\": [1, 3], \"Z\": [10, 20]},\n        \"exclusions\": [\"DO_NOT_ENROLL\", \"PRIOR\"],\n    }\n\n\ndef make_subject():\n    return {\n        \"birth_date\": \"2000-06-15\",\n        \"consents\": [{\"version\": \"v2\", \"signed_on\": \"2024-06-15\"}],\n        \"labs\": {\"A\": 2, \"Z\": 15},\n        \"flags\": [],\n    }\n\n\ndef test_same_day_consent_and_inclusive_age_and_lab_boundaries():\n    protocol = make_protocol()\n    protocol[\"min_age\"] = protocol[\"max_age\"] = 24\n    subject = make_subject()\n    subject[\"labs\"] = {\"A\": 1, \"Z\": 20}\n\n    assert evaluate_subject(subject, protocol, date(2024, 6, 15)) == {\n        \"eligible\": True,\n        \"reasons\": [],\n        \"consent_version\": \"v2\",\n    }\n\n\ndef test_reason_order_and_retired_wrong_consent_version():\n    protocol = make_protocol()\n    subject = make_subject()\n    subject.update(\n        birth_date=\"1970-01-01\",\n        consents=[{\"version\": \"v1\", \"signed_on\": \"2023-12-31\"}],\n        flags=[\"PRIOR\", \"DO_NOT_ENROLL\"],\n        labs={\"Z\": 21, \"A\": 0},\n    )\n\n    result = evaluate_subject(subject, protocol, date(2024, 6, 15))\n\n    assert result == {\n        \"eligible\": False,\n        \"reasons\": [\n            \"CONSENT_MISSING\",\n            \"CONSENT_VERSION\",\n            \"AGE_ABOVE_MAX\",\n            \"EXCLUSION_DO_NOT_ENROLL\",\n            \"EXCLUSION_PRIOR\",\n            \"LAB_A_LOW\",\n            \"LAB_Z_HIGH\",\n        ],\n        \"consent_version\": \"v1\",\n    }\n\n\ndef test_leap_day_birthday_is_computed_on_the_evaluation_date():\n    protocol = make_protocol()\n    protocol.update(min_age=24, max_age=24, labs={}, exclusions=[])\n    subject = make_subject()\n    subject.update(\n        birth_date=\"2000-02-29\",\n        consents=[{\"version\": \"v2\", \"signed_on\": \"2024-01-01\"}],\n        labs={},\n    )\n\n    before_birthday = evaluate_subject(subject, protocol, date(2024, 2, 28))\n    on_birthday = evaluate_subject(subject, protocol, date(2024, 3, 1))\n\n    assert before_birthday[\"reasons\"] == [\"AGE_BELOW_MIN\"]\n    assert on_birthday[\"eligible\"] is True\n\n\ndef test_latest_consent_across_versions_never_falls_back_to_older_valid_consent():\n    subject = make_subject()\n    subject[\"consents\"] = [\n        {\"version\": \"v9\", \"signed_on\": \"2025-01-01\"},\n        {\"version\": \"v1\", \"signed_on\": \"2024-02-01\"},\n        {\"version\": \"v2\", \"signed_on\": \"2024-01-01\"},\n    ]\n\n    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\n\n    assert result[\"consent_version\"] == \"v1\"\n    assert result[\"reasons\"] == [\"CONSENT_VERSION\"]\n\n\ndef test_malformed_required_fields_raise_field_naming_value_errors():\n    subject = make_subject()\n    subject[\"birth_date\"] = \"not-a-date\"\n    with pytest.raises(ValueError, match=\"birth_date\"):\n        evaluate_subject(subject, make_protocol(), date(2024, 6, ",
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 10.66,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_oaMdfoCU96w44RFqsRADEC",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 5956,
+   "output": 520,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "exit code 0\n...............................................                          [100%]\n47 passed in 0.03s\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 25.02,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_XcENAtf0N8kW387oLuSlW3",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\", \"old_string\": \"    for name, value in subject_labs.items():\\n        _string(name, \\\"subject.labs name\\\")\\n        _number(value, f\\\"subject.labs.{name}\\\")\\n\\n    lab_ranges: dict[str, tuple[int | float, int | float]] = {}\\n    for name, bounds in protocol_labs.items():\\n        _string(name, \\\"protocol.labs name\\\")\\n        if not isinstance(bounds, list) or len(bounds) != 2:\", \"new_string\": \"    lab_ranges: dict[str, tuple[int | float, int | float]] = {}\\n    for name, bounds in protocol_labs.items():\\n        _string(name, \\\"protocol.labs name\\\")\\n        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:\"}"
+   },
+   {
+    "id": "tooluse_OvsI83v3Hp2upCAhqXM7K6",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\", \"old_string\": \"            raise ValueError(f\\\"missing required field subject.labs.{name}\\\")\\n        lab_ranges[name] = (low, high)\", \"new_string\": \"            raise ValueError(f\\\"missing required field subject.labs.{name}\\\")\\n        _number(subject_labs[name], f\\\"subject.labs.{name}\\\")\\n        lab_ranges[name] = (low, high)\"}"
+   }
+  ],
+  "usage": {
+   "input": 6016,
+   "output": 1415,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "edited trialops/eligibility.py",
+   "edited trialops/eligibility.py"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 36.3,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_nZaRIsS2lKQYht9RjzCV8C",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\", \"old_string\": \"    lab_ranges: dict[str, tuple[int | float, int | float]] = {}\\n    for name, bounds in protocol_labs.items():\\n        _string(name, \\\"protocol.labs name\\\")\\n        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:\", \"new_string\": \"    for name, value in subject_labs.items():\\n        _string(name, \\\"subject.labs name\\\")\\n        _number(value, f\\\"subject.labs.{name}\\\")\\n\\n    lab_ranges: dict[str, tuple[int | float, int | float]] = {}\\n    for name, bounds in protocol_labs.items():\\n        _string(name, \\\"protocol.labs name\\\")\\n        if not isinstance(bounds, list) or len(bounds) != 2:\"}"
+   },
+   {
+    "id": "tooluse_1lIM5VAXOFnSUJgTNuyhBr",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\", \"old_string\": \"        _number(subject_labs[name], f\\\"subject.labs.{name}\\\")\\n\", \"new_string\": \"\"}"
+   }
+  ],
+  "usage": {
+   "input": 6637,
+   "output": 1171,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "edited trialops/eligibility.py",
+   "edited trialops/eligibility.py"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 57.38,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_5V7fOu8uOoCvhEwSufoypf",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_eligibility.py\", \"old_string\": \"def test_malformed_required_fields_raise_field_naming_value_errors():\", \"new_string\": \"def test_consent_signed_after_evaluation_date_is_ignored():\\n    subject = make_subject()\\n    subject[\\\"consents\\\"] = [{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2024-06-16\\\"}]\\n\\n    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n    assert result == {\\n        \\\"eligible\\\": False,\\n        \\\"reasons\\\": [\\\"CONSENT_MISSING\\\"],\\n        \\\"consent_version\\\": None,\\n    }\\n\\n\\ndef test_correct_version_signed_before_valid_from_is_missing_not_version():\\n    subject = make_subject()\\n    subject[\\\"consents\\\"] = [{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2023-12-31\\\"}]\\n\\n    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n    assert result[\\\"reasons\\\"] == [\\\"CONSENT_MISSING\\\"]\\n    assert result[\\\"consent_version\\\"] == \\\"v2\\\"\\n\\n\\ndef test_consent_signed_exactly_on_valid_from_is_accepted():\\n    subject = make_subject()\\n    subject[\\\"consents\\\"] = [{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2024-01-01\\\"}]\\n\\n    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15))[\\\"eligible\\\"]\\n\\n\\ndef test_age_and_lab_just_outside_inclusive_boundaries():\\n    protocol = make_protocol()\\n    subject = make_subject()\\n    subject[\\\"birth_date\\\"] = \\\"2006-06-16\\\"  # turns 18 the day after evaluation\\n    subject[\\\"labs\\\"] = {\\\"A\\\": 3.0001, \\\"Z\\\": 9.999}\\n\\n    result = evaluate_subject(subject, protocol, date(2024, 6, 15))\\n    assert result[\\\"reasons\\\"] == [\\\"AGE_BELOW_MIN\\\", \\\"LAB_A_HIGH\\\", \\\"LAB_Z_LOW\\\"]\\n\\n    subject[\\\"birth_date\\\"] = \\\"1993-06-15\\\"  # 31 on the evaluation date\\n    subject[\\\"labs\\\"] = {\\\"A\\\": 3, \\\"Z\\\": 10}\\n    result = evaluate_subject(subject, protocol, date(2024, 6, 15))\\n    assert result[\\\"reasons\\\"] == [\\\"AGE_ABOVE_MAX\\\"]\\n\\n    subject[\\\"birth_date\\\"] = \\\"1993-06-16\\\"  # still 30 on the evaluation date\\n    assert evaluate_subject(subject, protocol, date(2024, 6, 15))[\\\"eligible\\\"]\\n\\n\\ndef test_leap_day_birthday_in_non_leap_year():\\n    protocol = make_protocol()\\n    protocol.update(min_age=23, max_age=23, labs={}, exclusions=[])\\n    subject = make_subject()\\n    subject.update(\\n        birth_date=\\\"2000-02-29\\\",\\n        consents=[{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2024-01-01\\\"}],\\n        labs={},\\n    )\\n    # 2023 is not a leap year: still 22 on Feb 28, 23 on Mar 1.\\n    protocol[\\\"consent_valid_from\\\"] = \\\"2023-01-01\\\"\\n    subject[\\\"consents\\\"] = [{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2023-01-01\\\"}]\\n    assert evaluate_subject(subject, protocol, date(2023, 2, 28))[\\\"reasons\\\"] == [\\n        \\\"AGE_BELOW_MIN\\\"\\n    ]\\n    assert evaluate_subject(subject, protocol, date(2023, 3, 1))[\\\"eligible\\\"]\\n\\n\\ndef test_unlisted_flags_do_not_exclude():\\n    subject = make_subject()\\n    subject[\\\"flags\\\"] = [\\\"SOMETHING_ELSE\\\", \\\"prior\\\"]\\n\\n    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15))[\\\"eligible\\\"]\\n\\n\\n@pytest.mark.parametrize(\\n    \\\"field\\\",\\n    [\\\"min_age\\\", \\\"max_age\\\", \\\"required_consent_version\\\", \\\"consent_valid_from\\\",\\n     \\\"labs\\\", \\\"exclusions\\\"],\\n)\\ndef test_missing_protocol_fields_raise_value_error_naming_field(field):\\n    protocol = make_protocol()\\n    del protocol[field]\\n    with pytest.raises(ValueError, match=field):\\n        evaluate_subject(make_subject(), protocol, date(2024, 6, 15))\\n\\n\\n@pytest.mark.parametrize(\\\"field\\\", [\\\"birth_date\\\", \\\"consents\\\", \\\"labs\\\", \\\"flags\\\"])\\ndef test_missing_subject_fields_raise_value_error_naming_field(field):\\n    subject = make_subject()\\n    del subject[field]\\n    with pytest.raises(ValueError, match=field):\\n        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n\\ndef test_malformed_consent_and_lab_values_raise_value_error():\\n    subject = make_subject()\\n    subject[\\\"consents\\\"] = [{\\\"version\\\": \\\"v2\\\", \\\"signed_on\\\": \\\"2024-06-15T10:00:00\\\"}]\\n    with pytest.raises(ValueError, match=\\\"signed_on\\\"):\\n        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n    subject = make_subject()\\n    subject[\\\"consents\\\"] = [{\\\"signed_on\\\": \\\"2024-06-15\\\"}]\\n    with pytest.raises(ValueError, match=\\\"version\\\"):\\n        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n    subject = make_subject()\\n    subject[\\\"labs\\\"][\\\"A\\\"] = \\\"2\\\"\\n    with pytest.raises(ValueError, match=\\\"labs.A\\\"):\\n        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\\n\\n\\ndef test_malformed_required_fields_raise_field_naming_value_errors():\"}"
+   }
+  ],
+  "usage": {
+   "input": 7176,
+   "output": 2628,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "edited tests/test_eligibility.py"
+  ]
+ },
+ {
+  "call": 7,
+  "t": 59.75,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_9PdMMgYhI8ek6y5bY0OfBA",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 9152,
+   "output": 125,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "exit code 0\n................................................................         [100%]\n64 passed in 0.03s\n"
+  ]
+ },
+ {
+  "call": 8,
+  "t": 69.25,
+  "content": "`evaluate_subject` was already fully written in `trialops/eligibility.py`, so I left it exactly as it was. All the work was adding tests. The full suite passes (64 tests, up from 47).\n\nThe existing code already matches the request:\n- **Consent:** it picks the latest consent signed on or before `on`, of any version, and never falls back to an older one. It reports that consent's version even when it's the wrong one. A consent signed before `consent_valid_from` gives `CONSENT_MISSING`; a wrong version gives `CONSENT_VERSION`.\n- **Age and labs:** age is worked out exactly on `on`, and age and lab limits are both inclusive.\n- **Reasons:** they come out in the order you specified.\n- **Bad input:** missing or malformed fields raise a `ValueError` that names the field. Timestamps in date fields are rejected the same way.\n\n**New tests in `tests/test_eligibility.py`:**\n- **Consent:** a consent signed after `on` is ignored (no version reported); a correct-version consent signed before `consent_valid_from` gives only `CONSENT_MISSING`; one signed exactly on `consent_valid_from` is accepted.\n- **Boundaries:** age and lab values just outside the limits give the right reasons in the right order, and values exactly on the limits pass.\n- **Leap-day birthday in a non-leap year:** someone born 29 Feb 2000 is still 22 on 28 Feb 2023 and turns 23 on 1 Mar 2023.\n- **Exclusions:** only flags listed in the protocol exclude, and matching is case-sensitive (`prior` doesn't match `PRIOR`).\n- **Missing fields:** each required subject and protocol field, when removed, raises a `ValueError` naming it.\n- **Malformed values:** a timestamp as `signed_on`, a consent with no version, and a lab value given as a string all raise `ValueError`.\n\nThe existing tests already covered same-day consent, a retired wrong-version consent, full reason ordering, a leap-year leap-day birthday and choosing the latest consent across versions.\n\nTwo existing behaviours to be aware of:\n- A consent that is both too old and the wrong version gets both `CONSENT_MISSING` and `CONSENT_VERSION`; the existing tests expect this.\n- If two consents share the latest date, the one listed later wins.",
+  "tool_calls": [],
+  "usage": {
+   "input": 9211,
+   "output": 938,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "end_turn"
+ },
+ {
+  "call": 9,
+  "t": 73.83,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_lVU2Ezgsy5nIxc3l2J6w7N",
+    "name": "finish",
+    "arguments": "{\"summary\": \"`evaluate_subject` in `trialops/eligibility.py` already did everything requested, so I left it unchanged. I only added tests to `tests/test_eligibility.py`; the full suite passes (64 tests, up from 47).\\n\\nNew tests cover: a consent signed after `on` (ignored); a correct-version consent signed before `consent_valid_from` (`CONSENT_MISSING` only); a consent signed exactly on `consent_valid_from` (accepted); age and lab values just outside and exactly on the limits; a leap-day birthday in a non-leap year; exclusions matching only listed flags, case-sensitively; each required field, when missing, raising a `ValueError` that names it; and malformed values (a timestamp as `signed_on`, a consent with no version, a lab value given as a string). The existing tests already covered same-day consent, a retired wrong-version consent, reason ordering and picking the latest consent across versions.\\n\\nTwo existing behaviours to know about: a consent that is both too old and the wrong version gets both `CONSENT_MISSING` and `CONSENT_VERSION` (the existing tests expect this), and if two consents share the latest date, the one listed later wins.\"}"
+   }
+  ],
+  "usage": {
+   "input": 10024,
+   "output": 433,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "ok"
+  ]
+ }
+]

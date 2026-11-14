@@ -1,0 +1,386 @@
+{
+  "runs": 72,
+  "tasks": [
+    "t1-eligibility",
+    "t2-privacy",
+    "t3-audit",
+    "t4-scheduling",
+    "t5-safety",
+    "t6-governance"
+  ],
+  "models": {
+    "kimi-k3.1-pro": {
+      "open_weights": true,
+      "model_id": "global.moonshotai.kimi-k3.1",
+      "adapter": "openai",
+      "price_in": 4.0,
+      "price_out": 20.0,
+      "price_option": "Global CRIS",
+      "runs": 18,
+      "passed": 15,
+      "pass_rate": 0.8333,
+      "tasks_solved_every_run": 5,
+      "tasks_solved_at_least_once": 5,
+      "per_task": {
+        "t1-eligibility": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t2-privacy": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t3-audit": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t4-scheduling": {
+          "runs": 3,
+          "passed": 0
+        },
+        "t5-safety": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t6-governance": {
+          "runs": 3,
+          "passed": 3
+        }
+      },
+      "stops": {
+        "finish": 18
+      },
+      "model_calls": 186,
+      "calls_median": 9.5,
+      "tool_calls": 312,
+      "format_failures": 0,
+      "format_failures_by_kind": {},
+      "runs_with_format_failure": 0,
+      "no_tool_turns": 0,
+      "api_errors": 0,
+      "runs_with_api_error": 0,
+      "tokens": {
+        "input": 1691586,
+        "output": 140365,
+        "reasoning": 102863,
+        "cache_read": 1504768,
+        "cache_write": 0
+      },
+      "reasoning_share_of_output": 0.7328,
+      "wall_s_median": 46.7,
+      "wall_s_total": 884.0,
+      "usd_total": 3.8555,
+      "usd_per_run": 0.2142,
+      "usd_per_pass": 0.257
+    },
+    "glm-5.3": {
+      "open_weights": true,
+      "model_id": "us.zai.glm-5.3",
+      "adapter": "openai",
+      "price_in": 1.848,
+      "price_out": 5.808,
+      "price_option": "US CRIS",
+      "runs": 18,
+      "passed": 9,
+      "pass_rate": 0.5,
+      "tasks_solved_every_run": 1,
+      "tasks_solved_at_least_once": 5,
+      "per_task": {
+        "t1-eligibility": {
+          "runs": 3,
+          "passed": 2
+        },
+        "t2-privacy": {
+          "runs": 3,
+          "passed": 1
+        },
+        "t3-audit": {
+          "runs": 3,
+          "passed": 2
+        },
+        "t4-scheduling": {
+          "runs": 3,
+          "passed": 0
+        },
+        "t5-safety": {
+          "runs": 3,
+          "passed": 1
+        },
+        "t6-governance": {
+          "runs": 3,
+          "passed": 3
+        }
+      },
+      "stops": {
+        "max_calls": 11,
+        "no_tool_calls": 3,
+        "finish": 4
+      },
+      "model_calls": 428,
+      "calls_median": 30.0,
+      "tool_calls": 534,
+      "format_failures": 0,
+      "format_failures_by_kind": {},
+      "runs_with_format_failure": 0,
+      "no_tool_turns": 21,
+      "api_errors": 6,
+      "runs_with_api_error": 3,
+      "tokens": {
+        "input": 6180007,
+        "output": 1114624,
+        "reasoning": 983641,
+        "cache_read": 5786740,
+        "cache_write": 0
+      },
+      "reasoning_share_of_output": 0.8825,
+      "wall_s_median": 323.0,
+      "wall_s_total": 6284.9,
+      "usd_total": 9.1865,
+      "usd_per_run": 0.5104,
+      "usd_per_pass": 1.0207
+    },
+    "claude-opus-5.5": {
+      "open_weights": false,
+      "model_id": "us.anthropic.claude-opus-5-5",
+      "adapter": "converse",
+      "price_in": 4.4,
+      "price_out": 22.0,
+      "price_option": "US CRIS",
+      "runs": 18,
+      "passed": 15,
+      "pass_rate": 0.8333,
+      "tasks_solved_every_run": 5,
+      "tasks_solved_at_least_once": 5,
+      "per_task": {
+        "t1-eligibility": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t2-privacy": {
+          "runs": 3,
+          "passed": 0
+        },
+        "t3-audit": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t4-scheduling": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t5-safety": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t6-governance": {
+          "runs": 3,
+          "passed": 3
+        }
+      },
+      "stops": {
+        "finish": 18
+      },
+      "model_calls": 115,
+      "calls_median": 6.0,
+      "tool_calls": 178,
+      "format_failures": 0,
+      "format_failures_by_kind": {},
+      "runs_with_format_failure": 0,
+      "no_tool_turns": 6,
+      "api_errors": 0,
+      "runs_with_api_error": 0,
+      "tokens": {
+        "input": 892623,
+        "output": 106524,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "reasoning_share_of_output": 0.0,
+      "wall_s_median": 57.3,
+      "wall_s_total": 1056.2,
+      "usd_total": 6.2711,
+      "usd_per_run": 0.3484,
+      "usd_per_pass": 0.4181
+    },
+    "claude-fable-5-2": {
+      "open_weights": false,
+      "model_id": "global.anthropic.claude-fable-5-2",
+      "adapter": "converse",
+      "price_in": 8.0,
+      "price_out": 40.0,
+      "price_option": "Global CRIS",
+      "runs": 18,
+      "passed": 18,
+      "pass_rate": 1.0,
+      "tasks_solved_every_run": 6,
+      "tasks_solved_at_least_once": 6,
+      "per_task": {
+        "t1-eligibility": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t2-privacy": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t3-audit": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t4-scheduling": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t5-safety": {
+          "runs": 3,
+          "passed": 3
+        },
+        "t6-governance": {
+          "runs": 3,
+          "passed": 3
+        }
+      },
+      "stops": {
+        "finish": 18
+      },
+      "model_calls": 95,
+      "calls_median": 5.0,
+      "tool_calls": 278,
+      "format_failures": 0,
+      "format_failures_by_kind": {},
+      "runs_with_format_failure": 0,
+      "no_tool_turns": 0,
+      "api_errors": 0,
+      "runs_with_api_error": 0,
+      "tokens": {
+        "input": 1015468,
+        "output": 296786,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "reasoning_share_of_output": 0.0,
+      "wall_s_median": 155.6,
+      "wall_s_total": 2826.3,
+      "usd_total": 19.9952,
+      "usd_per_run": 1.1108,
+      "usd_per_pass": 1.1108
+    }
+  },
+  "per_task": {
+    "t1-eligibility": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 3
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 2
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    },
+    "t2-privacy": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 3
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 1
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 0
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    },
+    "t3-audit": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 3
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 2
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    },
+    "t4-scheduling": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 0
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 0
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    },
+    "t5-safety": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 3
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 1
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    },
+    "t6-governance": {
+      "kimi-k3.1-pro": {
+        "runs": 3,
+        "passed": 3
+      },
+      "glm-5.3": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-opus-5.5": {
+        "runs": 3,
+        "passed": 3
+      },
+      "claude-fable-5-2": {
+        "runs": 3,
+        "passed": 3
+      }
+    }
+  },
+  "usd_matrix": 39.3083,
+  "usd_smoke": 5.8241,
+  "usd_total": 45.1324,
+  "first_finish": "2026-11-13T19:26:59Z",
+  "last_finish": "2026-11-13T20:10:34Z"
+}

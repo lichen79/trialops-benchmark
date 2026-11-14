@@ -1,0 +1,411 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-13 20:38:50
+@@ -1,11 +1,15 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+ from trialops.safety import triage_events
+ 
++NOW = datetime(2024, 1, 1, tzinfo=timezone.utc)
++TICK = timedelta(microseconds=1)
+ 
++
+ def event(event_id, **changes):
+     value = {
+         "event_id": event_id,
+@@ -19,6 +23,13 @@
+     return value
+ 
+ 
++def assert_code(code, events, *, now=NOW):
++    """The error message must be exactly the stable code."""
++    with pytest.raises(ValueError) as excinfo:
++        triage_events(events, now=now)
++    assert str(excinfo.value) == code
++
++
+ def test_chained_followups_merge_offsets_sources_and_seriousness():
+     events = [
+         event(
+@@ -98,3 +109,376 @@
+             [event("A", onset="2024-01-01T00:00:00")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
++
++
++# --- chained follow-ups and input order -----------------------------------
++
++
++def test_empty_input_yields_no_cases():
++    assert triage_events([], now=NOW) == []
++    assert triage_events(iter([]), now=NOW) == []
++
++
++def test_input_order_does_not_affect_output():
++    events = [
++        event("E1"),
++        event("E2", follow_up_of="E1", seriousness="hospitalization", source="site-a"),
++        event("E3", follow_up_of="E2", uncertain=True),
++        event("R1", subject_pseudonym="subject-002", onset="2024-01-09T00:00:00Z"),
++        event(
++            "R2",
++            follow_up_of="R1",
++            subject_pseudonym="subject-002",
++            onset="2024-01-12T00:00:00Z",
++            source="site-c",
++        ),
++    ]
++    baseline = triage_events(events, now=NOW)
++
++    assert [case["case_id"] for case in baseline] == ["R1", "E1"]
++    assert baseline[0]["event_ids"] == ["R1", "R2"]
++    assert baseline[0]["sources"] == ["site-b", "site-c"]
++    assert baseline[0]["uncertain"] is False
++    assert baseline[1]["event_ids"] == ["E1", "E2", "E3"]
++    assert baseline[1]["seriousness"] == "hospitalization"
++    assert baseline[1]["uncertain"] is True
++    for ordering in permutations(events):
++        assert triage_events(list(ordering), now=NOW) == baseline
++
++
++def test_every_source_event_id_is_preserved_exactly_once():
++    events = [event("E1")] + [
++        event(f"E{index}", follow_up_of=f"E{index - 1}") for index in range(2, 8)
++    ]
++    events.append(event("Z9", subject_pseudonym="subject-002"))
++
++    cases = triage_events(reversed(events), now=NOW)
++
++    merged_ids = [event_id for case in cases for event_id in case["event_ids"]]
++    assert sorted(merged_ids) == sorted(item["event_id"] for item in events)
++    assert len(merged_ids) == len(set(merged_ids))
++
++
++def test_explicit_null_follow_up_is_a_root():
++    [case] = triage_events([event("E1", follow_up_of=None)], now=NOW)
++    assert case["case_id"] == "E1"
++    assert case["event_ids"] == ["E1"]
++
++
++def test_lookalike_roots_are_never_merged_without_an_explicit_link():
++    cases = triage_events([event("B"), event("A")], now=NOW)
++    assert [case["case_id"] for case in cases] == ["A", "B"]
++    assert [case["event_ids"] for case in cases] == [["A"], ["B"]]
++
++
++# --- offsets ---------------------------------------------------------------
++
++
++@pytest.mark.parametrize(
++    "onset",
++    [
++        "2024-01-10T08:00:00Z",
++        "2024-01-10T08:00:00+00:00",
++        "2024-01-10T10:00:00+02:00",
++        "2024-01-10T03:00:00-05:00",
++        "2024-01-10T13:30:00+05:30",
++        "2024-01-09T22:00:00-10:00",
++    ],
++)
++def test_equivalent_offsets_normalise_to_the_same_utc_instant(onset):
++    [case] = triage_events([event("E1", onset=onset)], now=NOW)
++    assert case["onset"] == "2024-01-10T08:00:00Z"
++    assert case["report_by"] == "2024-02-09T08:00:00Z"
++
++
++def test_cases_sort_by_instant_rather_than_by_onset_text():
++    events = [
++        event("B", onset="2024-01-31T23:30:00Z"),
++        # Textually later, but 23:00Z on the previous day.
++        event("A", onset="2024-02-01T01:00:00+02:00"),
++        event("C", onset="2024-01-31T18:15:00-05:00"),
++    ]
++
++    cases = triage_events(events, now=NOW)
++
++    assert [(case["case_id"], case["onset"]) for case in cases] == [
++        ("A", "2024-01-31T23:00:00Z"),
++        ("C", "2024-01-31T23:15:00Z"),
++        ("B", "2024-01-31T23:30:00Z"),
++    ]
++
++
++@pytest.mark.parametrize(
++    "onset",
++    ["2024-01-10T08:00:00", "2024-01-10", "not-a-timestamp", "", None, 1704873600],
++)
++def test_naive_or_malformed_onsets_are_rejected(onset):
++    assert_code("INVALID_ONSET", [event("E1", onset=onset)])
++
++
++@pytest.mark.parametrize("now", [datetime(2024, 1, 1), "2024-01-01T00:00:00Z", None])
++def test_now_must_be_an_aware_datetime(now):
++    assert_code("INVALID_NOW", [event("E1")], now=now)
++
++
++# --- duplicate roots / duplicate IDs --------------------------------------
++
++
++@pytest.mark.parametrize(
++    "events",
++    [
++        [event("E1"), event("E1", source="site-c")],
++        [event("E1"), event("E1", subject_pseudonym="subject-002")],
++        [event("E1"), event("E1", follow_up_of="E1")],
++        [
++            event("E1"),
++            event("E2", follow_up_of="E1"),
++            event("E2", follow_up_of="E1", seriousness="fatal"),
++        ],
++    ],
++)
++def test_duplicate_ids_are_rejected_in_any_order(events):
++    for ordering in permutations(events):
++        assert_code("DUPLICATE_EVENT_ID", list(ordering))
++
++
++# --- invalid links: missing roots and cycles ------------------------------
++
++
++def test_chain_without_a_root_is_rejected():
++    events = [event("E2", follow_up_of="E1"), event("E3", follow_up_of="E2")]
++    for ordering in permutations(events):
++        assert_code("MISSING_ROOT", list(ordering))
++
++
++def test_self_link_is_a_cycle():
++    assert_code("FOLLOW_UP_CYCLE", [event("A", follow_up_of="A")])
++    assert_code("FOLLOW_UP_CYCLE", [event("R"), event("A", follow_up_of="A")])
++
++
++def test_cycle_with_tail_is_rejected_next_to_a_valid_case_in_any_order():
++    events = [
++        event("R"),
++        event("A", follow_up_of="C"),
++        event("B", follow_up_of="A"),
++        event("C", follow_up_of="B"),
++        event("D", follow_up_of="A"),
++    ]
++    for ordering in permutations(events):
++        assert_code("FOLLOW_UP_CYCLE", list(ordering))
++
++
++@pytest.mark.parametrize("link", ["", "   ", 7, ["E1"]])
++def test_malformed_follow_up_links_are_rejected(link):
++    assert_code(
++        "INVALID_FOLLOW_UP_OF", [event("E1"), event("E2", follow_up_of=link)]
++    )
++
++
++# --- mixed subject pseudonyms / event codes -------------------------------
++
++
++@pytest.mark.parametrize(
++    "changes",
++    [
++        {"event_code": "SYNTH-02"},
++        {"subject_pseudonym": "subject-002"},
++        # Near matches are still different values: no fuzzy matching.
++        {"event_code": "synth-01"},
++        {"subject_pseudonym": "subject-001 "},
++    ],
++)
++def test_mixed_chain_is_rejected_at_any_depth_and_in_any_order(changes):
++    events = [
++        event("A"),
++        event("B", follow_up_of="A"),
++        event("C", follow_up_of="B", **changes),
++    ]
++    for ordering in permutations(events):
++        assert_code("MIXED_CASE", list(ordering))
++
++
++def test_mixed_root_is_rejected():
++    events = [
++        event("A", event_code="SYNTH-02"),
++        event("B", follow_up_of="A"),
++        event("C", follow_up_of="B"),
++    ]
++    assert_code("MIXED_CASE", events)
++
++
++# --- seriousness precedence and deadlines ---------------------------------
++
++
++@pytest.mark.parametrize(
++    ("levels", "expected", "report_by"),
++    [
++        (["other"], "other", "2024-02-09T08:00:00Z"),
++        (["other", "other"], "other", "2024-02-09T08:00:00Z"),
++        (["other", "hospitalization"], "hospitalization", "2024-01-25T08:00:00Z"),
++        (
++            ["hospitalization", "life_threatening"],
++            "life_threatening",
++            "2024-01-17T08:00:00Z",
++        ),
++        (["life_threatening", "fatal"], "fatal", "2024-01-17T08:00:00Z"),
++        (["other", "fatal"], "fatal", "2024-01-17T08:00:00Z"),
++        (
++            ["hospitalization", "other", "life_threatening", "other"],
++            "life_threatening",
++            "2024-01-17T08:00:00Z",
++        ),
++        (
++            ["other", "hospitalization", "life_threatening", "fatal"],
++            "fatal",
++            "2024-01-17T08:00:00Z",
++        ),
++    ],
++)
++def test_highest_seriousness_wins_wherever_it_sits_in_the_chain(
++    levels, expected, report_by
++):
++    for ordered_levels in (levels, levels[::-1]):
++        events = [event("E1", seriousness=ordered_levels[0])]
++        for index, level in enumerate(ordered_levels[1:], start=2):
++            events.append(
++                event(f"E{index}", follow_up_of=f"E{index - 1}", seriousness=level)
++            )
++
++        [case] = triage_events(events, now=NOW)
++
++        assert case["seriousness"] == expected
++        assert case["report_by"] == report_by
++
++
++@pytest.mark.parametrize(
++    "seriousness", ["severe", "Fatal", "FATAL", "life-threatening", " other", "", None, 3]
++)
++def test_unknown_seriousness_is_rejected(seriousness):
++    assert_code("INVALID_SERIOUSNESS", [event("E1", seriousness=seriousness)])
++    assert_code(
++        "INVALID_SERIOUSNESS",
++        [event("E1"), event("E2", follow_up_of="E1", seriousness=seriousness)],
++    )
++
++
++def test_missing_seriousness_is_rejected():
++    incomplete = event("E1")
++    del incomplete["seriousness"]
++    assert_code("INVALID_SERIOUSNESS", [incomplete])
++
++
++def test_deadline_clock_starts_at_earliest_onset_not_at_the_upgrading_follow_up():
++    events = [
++        event("E1", onset="2024-03-01T00:00:00Z"),
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-03-20T00:00:00Z",
++            seriousness="hospitalization",
++        ),
++    ]
++
++    [case] = triage_events(events, now=NOW)
++
++    assert case["onset"] == "2024-03-01T00:00:00Z"
++    assert case["report_by"] == "2024-03-16T00:00:00Z"
++
++
++def test_follow_up_with_earlier_onset_moves_the_deadline_earlier():
++    events = [
++        event("E1", onset="2024-03-01T00:00:00Z", seriousness="hospitalization"),
++        event("E2", follow_up_of="E1", onset="2024-02-25T00:00:00Z"),
++    ]
++
++    [case] = triage_events(events, now=NOW)
++
++    assert case["case_id"] == "E1"
++    assert case["onset"] == "2024-02-25T00:00:00Z"
++    assert case["report_by"] == "2024-03-11T00:00:00Z"
++
++
++# --- overdue boundaries ----------------------------------------------------
++
++
++@pytest.mark.parametrize(
++    ("seriousness", "days"),
++    [("fatal", 7), ("life_threatening", 7), ("hospitalization", 15), ("other", 30)],
++)
++def test_overdue_is_strictly_after_the_deadline_for_every_tier(seriousness, days):
++    deadline = datetime(2024, 1, 10, 8, 0, tzinfo=timezone.utc) + timedelta(days=days)
++    events = [event("E1", seriousness=seriousness)]
++
++    def overdue(now):
++        [case] = triage_events(events, now=now)
++        assert case["report_by"] == deadline.isoformat().replace("+00:00", "Z")
++        return case["overdue"]
++
++    assert overdue(deadline - TICK) is False
++    assert overdue(deadline) is False
++    assert overdue(deadline + TICK) is True
++
++
++def test_overdue_compares_instants_when_now_has_a_non_utc_offset():
++    deadline = datetime(2024, 2, 9, 8, 0, tzinfo=timezone.utc)
++    india = timezone(timedelta(hours=5, minutes=30))
++    pacific = timezone(timedelta(hours=-8))
++    events = [event("E1")]
++
++    for zone in (india, pacific):
++        local_deadline = deadline.astimezone(zone)
++        assert triage_events(events, now=local_deadline)[0]["overdue"] is False
++        assert triage_events(events, now=local_deadline + TICK)[0]["overdue"] is True
++        assert triage_events(events, now=local_deadline - TICK)[0]["overdue"] is False
++
++
++def test_overdue_is_decided_per_case():
++    events = [
++        event("LATE", seriousness="fatal"),
++        event("OPEN", subject_pseudonym="subject-002"),
++    ]
++
++    cases = triage_events(events, now=datetime(2024, 1, 20, tzinfo=timezone.utc))
++
++    assert {case["case_id"]: case["overdue"] for case in cases} == {
++        "LATE": True,
++        "OPEN": False,
++    }
++
++
++# --- uncertainty -----------------------------------------------------------
++
++
++def test_uncertain_defaults_to_false_and_is_sticky_across_the_chain():
++    plain = [event("E1"), event("E2", follow_up_of="E1", uncertain=False)]
++    assert triage_events(plain, now=NOW)[0]["uncertain"] is False
++
++    for position in range(3):
++        events = [
++            event("E1"),
++            event("E2", follow_up_of="E1"),
++            event("E3", follow_up_of="E2"),
++        ]
++        events[position]["uncertain"] = True
++        assert triage_events(events, now=NOW)[0]["uncertain"] is True
++
++
++@pytest.mark.parametrize("uncertain", ["yes", 1, 0, "false"])
++def test_non_boolean_uncertain_is_rejected_rather_than_guessed(uncertain):
++    assert_code("INVALID_UNCERTAIN", [event("E1", uncertain=uncertain)])
++
++
++def test_output_contains_only_derived_follow_up_fields():
++    [case] = triage_events([event("E1", note="synthetic free text")], now=NOW)
++    assert set(case) == {
++        "case_id",
++        "subject_pseudonym",
++        "event_code",
++        "onset",
++        "seriousness",
++        "report_by",
++        "sources",
++        "event_ids",
++        "uncertain",
++        "overdue",
++    }

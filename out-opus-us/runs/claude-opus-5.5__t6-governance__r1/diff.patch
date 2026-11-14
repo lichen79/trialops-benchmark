@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_governance.py b/tests/test_governance.py
+--- a/tests/test_governance.py	2026-11-13 14:57:35
++++ b/tests/test_governance.py	2026-11-13 20:39:05
+@@ -174,6 +174,107 @@
+     )["status"] == "expired"
+ 
+ 
++def test_repeated_execution_is_invalid_state_without_executor_call():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    calls = []
++
++    def executor(executor_input):
++        calls.append(executor_input)
++        return {"rows": 1}
++
++    executed = apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    snapshot = deepcopy(executed)
++    with pytest.raises(ValueError, match="INVALID_STATE"):
++        apply_reuse_action(executed, "execute", "alice", NOW, executor)
++    assert len(calls) == 1
++    assert executed == snapshot
++
++
++def test_non_dict_executor_result_is_execution_failed():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    with pytest.raises(ValueError, match="EXECUTION_FAILED"):
++        apply_reuse_action(approved, "execute", "alice", NOW, lambda r: ["rows"])
++    assert approved["status"] == "approved"
++    assert "execution_result" not in approved
++
++
++def test_boolean_pseudonymized_flag_no_longer_satisfies_privacy():
++    legacy = request("submitted", pseudonymized=True)
++    del legacy["privacy_plan"]
++    with pytest.raises(ValueError, match="PSEUDONYMIZATION_REQUIRED"):
++        apply_reuse_action(legacy, "approve", "bob", NOW)
++
++    wrong_domain = request("submitted")
++    wrong_domain["privacy_plan"]["domain"] = "other purpose"
++    with pytest.raises(ValueError, match="PSEUDONYMIZATION_REQUIRED"):
++        apply_reuse_action(wrong_domain, "approve", "bob", NOW)
++
++    extra_field = request("submitted")
++    extra_field["privacy_plan"]["fields"].append("name")
++    with pytest.raises(ValueError, match="PSEUDONYMIZATION_REQUIRED"):
++        apply_reuse_action(extra_field, "approve", "bob", NOW)
++
++
++def test_execution_rechecks_privacy_plan_and_metadata():
++    tampered = request("approved", approval_expires_on="2025-02-01")
++    tampered["privacy_plan"]["fields"] = ["pseudonym"]
++    calls = []
++    with pytest.raises(ValueError, match="PSEUDONYMIZATION_REQUIRED"):
++        apply_reuse_action(tampered, "execute", "alice", NOW, calls.append)
++    degraded = request("approved", approval_expires_on="2025-02-01")
++    degraded["metadata"]["representative"] = False
++    with pytest.raises(ValueError, match="METADATA_REQUIRED"):
++        apply_reuse_action(degraded, "execute", "alice", NOW, calls.append)
++    assert calls == []
++
++
++def test_missing_metadata_fails_atomically():
++    missing = request("submitted")
++    del missing["metadata"]
++    snapshot = deepcopy(missing)
++    with pytest.raises(ValueError, match="METADATA_REQUIRED"):
++        apply_reuse_action(missing, "approve", "bob", NOW)
++    assert missing == snapshot
++
++    no_score = request("submitted")
++    del no_score["metadata"]["quality_score"]
++    with pytest.raises(ValueError, match="METADATA_REQUIRED"):
++        apply_reuse_action(no_score, "approve", "bob", NOW)
++
++
++def test_separation_of_duties_failures_do_not_mutate():
++    submitted = request("submitted")
++    snapshot = deepcopy(submitted)
++    with pytest.raises(PermissionError):
++        apply_reuse_action(submitted, "approve", "alice", NOW)
++    with pytest.raises(PermissionError):
++        apply_reuse_action(submitted, "approve", "mallory", NOW)
++    assert submitted == snapshot
++
++
++def test_stale_approval_after_workflow_and_history_chronology():
++    approved = apply_reuse_action(
++        apply_reuse_action(request(), "submit", "alice", NOW),
++        "approve",
++        "bob",
++        NOW,
++    )
++    late = NOW + timedelta(days=31)
++    with pytest.raises(ValueError, match="APPROVAL_EXPIRED"):
++        apply_reuse_action(approved, "execute", "alice", late, successful_executor)
++    assert len(approved["history"]) == 2
++
++    eastern = timezone(timedelta(hours=-5))
++    expired = apply_reuse_action(
++        approved, "expire", "system", late.astimezone(eastern)
++    )
++    assert [(e["action"], e["actor"], e["at"]) for e in expired["history"]] == [
++        ("submit", "alice", "2025-01-01T12:00:00Z"),
++        ("approve", "bob", "2025-01-01T12:00:00Z"),
++        ("expire", "system", "2025-02-01T12:00:00Z"),
++    ]
++
++
+ def test_invalid_states_and_naive_now_are_rejected():
+     with pytest.raises(ValueError, match="INVALID_STATE"):
+         apply_reuse_action(request("approved"), "submit", "alice", NOW)

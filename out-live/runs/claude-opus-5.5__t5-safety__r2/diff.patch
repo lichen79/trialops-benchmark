@@ -1,0 +1,138 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-14 11:21:09
+@@ -90,6 +90,134 @@
+         )
+ 
+ 
++UTC_NOW = datetime(2024, 1, 1, tzinfo=timezone.utc)
++
++
++def test_input_order_does_not_affect_output():
++    from itertools import permutations
++
++    events = [
++        event("R", source="site-c"),
++        event("F1", follow_up_of="R", onset="2024-01-05T00:00:00Z", source="site-a"),
++        event("F2", follow_up_of="F1", seriousness="life_threatening", uncertain=True),
++        event("S", subject_pseudonym="subject-002", onset="2024-01-01T00:00:00Z"),
++    ]
++    expected = triage_events(events, now=UTC_NOW)
++    for ordering in permutations(events):
++        assert triage_events(list(ordering), now=UTC_NOW) == expected
++    assert [case["case_id"] for case in expected] == ["S", "R"]
++    merged = expected[1]
++    assert merged["onset"] == "2024-01-05T00:00:00Z"
++    assert merged["report_by"] == "2024-01-12T00:00:00Z"
++    assert merged["sources"] == ["site-a", "site-b", "site-c"]
++    assert merged["uncertain"] is True
++
++
++@pytest.mark.parametrize(
++    ("seriousness", "report_by"),
++    [
++        ("fatal", "2024-03-08T00:00:00Z"),
++        ("life_threatening", "2024-03-08T00:00:00Z"),
++        ("hospitalization", "2024-03-16T00:00:00Z"),
++        ("other", "2024-03-31T00:00:00Z"),
++    ],
++)
++def test_report_by_offsets(seriousness, report_by):
++    cases = triage_events(
++        [event("A", onset="2024-03-01T00:00:00Z", seriousness=seriousness)],
++        now=UTC_NOW,
++    )
++    assert cases[0]["report_by"] == report_by
++    assert cases[0]["uncertain"] is False
++
++
++def test_deadline_uses_earliest_onset_not_followup_arrival():
++    cases = triage_events(
++        [
++            event("A", onset="2024-03-20T00:00:00Z"),
++            event("B", follow_up_of="A", onset="2024-03-01T00:00:00Z"),
++        ],
++        now=UTC_NOW,
++    )
++    assert cases[0]["onset"] == "2024-03-01T00:00:00Z"
++    assert cases[0]["report_by"] == "2024-03-31T00:00:00Z"
++
++
++@pytest.mark.parametrize(
++    ("levels", "expected"),
++    [
++        (["other", "hospitalization"], "hospitalization"),
++        (["hospitalization", "life_threatening", "other"], "life_threatening"),
++        (["life_threatening", "fatal", "hospitalization"], "fatal"),
++        (["fatal", "other"], "fatal"),
++        (["other", "other"], "other"),
++    ],
++)
++def test_seriousness_precedence(levels, expected):
++    events = [event("E0", seriousness=levels[0])] + [
++        event(f"E{i}", follow_up_of=f"E{i - 1}", seriousness=level)
++        for i, level in enumerate(levels[1:], start=1)
++    ]
++    assert triage_events(events, now=UTC_NOW)[0]["seriousness"] == expected
++
++
++def test_overdue_boundary_is_strict():
++    from datetime import timedelta
++
++    events = [event("A", onset="2024-01-01T00:00:00Z", seriousness="fatal")]
++    report_by = datetime(2024, 1, 8, tzinfo=timezone.utc)
++    tz_plus2 = timezone(timedelta(hours=2))
++    assert triage_events(events, now=report_by)[0]["overdue"] is False
++    assert triage_events(events, now=report_by.astimezone(tz_plus2))[0]["overdue"] is False
++    assert triage_events(events, now=report_by - timedelta(microseconds=1))[0]["overdue"] is False
++    assert triage_events(events, now=report_by + timedelta(microseconds=1))[0]["overdue"] is True
++
++
++def test_duplicate_roots_rejected_regardless_of_followups():
++    with pytest.raises(ValueError, match="DUPLICATE_EVENT_ID"):
++        triage_events(
++            [event("R"), event("F", follow_up_of="R"), event("R", source="site-z")],
++            now=UTC_NOW,
++        )
++
++
++def test_self_link_and_tail_into_cycle_are_rejected():
++    with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++        triage_events([event("A", follow_up_of="A")], now=UTC_NOW)
++    with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++        triage_events(
++            [
++                event("T", follow_up_of="B"),
++                event("B", follow_up_of="C"),
++                event("C", follow_up_of="B"),
++            ],
++            now=UTC_NOW,
++        )
++
++
++def test_mixed_subject_and_indirect_mixed_code_rejected():
++    with pytest.raises(ValueError, match="MIXED_CASE"):
++        triage_events(
++            [event("A"), event("B", follow_up_of="A", subject_pseudonym="subject-999")],
++            now=UTC_NOW,
++        )
++    with pytest.raises(ValueError, match="MIXED_CASE"):
++        triage_events(
++            [
++                event("C", follow_up_of="B", event_code="OTHER"),
++                event("B", follow_up_of="A"),
++                event("A"),
++            ],
++            now=UTC_NOW,
++        )
++
++
++@pytest.mark.parametrize("value", ["severe", "FATAL", None, 3])
++def test_unknown_seriousness_rejected(value):
++    with pytest.raises(ValueError, match="INVALID_SERIOUSNESS"):
++        triage_events([event("A", seriousness=value)], now=UTC_NOW)
++
++
+ def test_naive_now_and_onset_are_rejected():
+     with pytest.raises(ValueError, match="INVALID_NOW"):
+         triage_events([], now=datetime(2024, 1, 1))

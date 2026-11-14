@@ -1,0 +1,305 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_scheduling.py b/tests/test_scheduling.py
+--- a/tests/test_scheduling.py	2026-11-13 14:58:30
++++ b/tests/test_scheduling.py	2026-11-13 20:36:00
+@@ -1,10 +1,49 @@
++from copy import deepcopy
+ from datetime import date, timedelta
+ 
+ import pytest
+ 
+-from trialops.scheduling import plan_visits
++from trialops.scheduling import book_subject_visits, plan_visits
+ 
++ON = date(2024, 6, 15)
+ 
++
++def make_protocol():
++    return {
++        "min_age": 18,
++        "max_age": 30,
++        "required_consent_version": "v2",
++        "consent_valid_from": "2024-01-01",
++        "labs": {"A": [1, 3], "Z": [10, 20]},
++        "exclusions": ["DO_NOT_ENROLL", "PRIOR"],
++    }
++
++
++def make_subject():
++    return {
++        "birth_date": "2000-06-15",
++        "consents": [{"version": "v2", "signed_on": "2024-06-15"}],
++        "labs": {"A": 2, "Z": 15},
++        "flags": [],
++    }
++
++
++def book(capacity, **overrides):
++    arguments = {
++        "on": ON,
++        "first_day": date(2024, 7, 1),
++        "offsets_months": [0],
++        "hour": 9,
++        "minute": 0,
++        "timezone": "America/New_York",
++        "capacity": capacity,
++    }
++    subject = overrides.pop("subject", None) or make_subject()
++    protocol = overrides.pop("protocol", None) or make_protocol()
++    arguments.update(overrides)
++    return book_subject_visits(subject, protocol, **arguments)
++
++
+ def test_month_end_targets_use_the_original_day_and_leap_year():
+     visits = plan_visits(
+         first_day=date(2024, 1, 31),
+@@ -133,3 +172,178 @@
+             capacity=capacity,
+         )
+     assert capacity == {date(2024, 1, 1): 1}
++
++
++def test_search_window_includes_the_366th_day_after_the_nominal_day():
++    nominal = date(2024, 1, 1)
++    closed = {nominal + timedelta(days=days) for days in range(366)}
++
++    [visit] = plan_visits(
++        first_day=nominal,
++        offsets_months=[0],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        closed_days=closed,
++    )
++
++    assert visit["local"] == "2025-01-01T09:00:00-05:00"
++
++
++def test_booking_sequential_calls_contend_for_slots():
++    capacity = {date(2024, 7, 1): 2}
++
++    first = book(capacity)
++    assert capacity == {date(2024, 7, 1): 1}
++    second = book(capacity)
++    assert capacity == {date(2024, 7, 1): 0}
++    third = book(capacity)
++
++    assert first == second == [
++        {
++            "offset_months": 0,
++            "local": "2024-07-01T09:00:00-04:00",
++            "utc": "2024-07-01T13:00:00Z",
++        }
++    ]
++    assert third[0]["local"] == "2024-07-02T09:00:00-04:00"
++    # The unlisted overflow day stays unconstrained and is never inserted.
++    assert capacity == {date(2024, 7, 1): 0}
++
++
++def test_booking_decrements_once_per_visit_sharing_a_day():
++    closed = {date(2024, 1, 31)} | {date(2024, 2, day) for day in range(1, 29)}
++    capacity = {date(2024, 2, 29): 2, date(2024, 3, 1): 5}
++
++    visits = book(
++        capacity,
++        first_day=date(2024, 1, 31),
++        offsets_months=[0, 1],
++        closed_days=closed,
++    )
++
++    assert [visit["local"][:10] for visit in visits] == ["2024-02-29", "2024-02-29"]
++    assert capacity == {date(2024, 2, 29): 0, date(2024, 3, 1): 5}
++
++
++def test_booking_rolls_back_when_a_later_visit_cannot_be_scheduled():
++    capacity = {date(2024, 1, 1): 2}
++    book(capacity, first_day=date(2024, 1, 1))
++    assert capacity == {date(2024, 1, 1): 1}
++
++    closed = {date(2024, 2, 1) + timedelta(days=days) for days in range(367)}
++    original_closed = closed.copy()
++    with pytest.raises(ValueError, match="UNSCHEDULABLE"):
++        book(
++            capacity,
++            first_day=date(2024, 1, 1),
++            offsets_months=[0, 1],
++            closed_days=closed,
++        )
++
++    # The failed call reserved nothing; the earlier booking stays committed.
++    assert capacity == {date(2024, 1, 1): 1}
++    assert closed == original_closed
++
++
++def test_booking_ineligible_subject_reports_ordered_reasons_before_planning():
++    subject = make_subject()
++    subject.update(flags=["PRIOR"], labs={"A": 0, "Z": 15})
++    capacity = {date(2024, 7, 1): 1}
++
++    with pytest.raises(ValueError) as error:
++        # The invalid zone shows that eligibility is checked before planning.
++        book(capacity, subject=subject, timezone="Not/A_Real_Zone")
++
++    assert str(error.value) == "INELIGIBLE:EXCLUSION_PRIOR,LAB_A_LOW"
++    assert capacity == {date(2024, 7, 1): 1}
++
++
++def test_booking_planning_errors_leave_capacity_unchanged():
++    capacity = {date(2024, 7, 1): 1}
++
++    with pytest.raises(ValueError, match="INVALID_TIMEZONE"):
++        book(capacity, timezone="Not/A_Real_Zone")
++    with pytest.raises(ValueError, match="DUPLICATE_OFFSET"):
++        book(capacity, offsets_months=[0, 0])
++    with pytest.raises(TypeError):
++        book(None)
++
++    assert capacity == {date(2024, 7, 1): 1}
++
++
++def test_booking_preserves_month_end_plan_and_does_not_mutate_inputs():
++    subject = make_subject()
++    protocol = make_protocol()
++    subject_snapshot = deepcopy(subject)
++    protocol_snapshot = deepcopy(protocol)
++    capacity = {date(2024, 2, 29): 1, date(2024, 3, 31): 3, date(2030, 1, 1): 0}
++    arguments = {
++        "first_day": date(2024, 1, 31),
++        "offsets_months": [1, 2, 12],
++        "hour": 9,
++        "minute": 5,
++        "timezone": "America/New_York",
++    }
++    expected = plan_visits(capacity=dict(capacity), **arguments)
++
++    visits = book(capacity, subject=subject, protocol=protocol, **arguments)
++
++    assert visits == expected
++    assert [visit["local"] for visit in visits] == [
++        "2024-02-29T09:05:00-05:00",
++        "2024-03-31T09:05:00-04:00",
++        "2025-01-31T09:05:00-05:00",
++    ]
++    assert capacity == {
++        date(2024, 2, 29): 0,
++        date(2024, 3, 31): 2,
++        date(2030, 1, 1): 0,
++    }
++    assert subject == subject_snapshot
++    assert protocol == protocol_snapshot
++
++
++def test_booking_preserves_dst_handling_and_wall_time_when_rescheduled():
++    capacity = {date(2024, 3, 10): 1}
++    spring = {"first_day": date(2024, 3, 10), "hour": 2, "minute": 30}
++
++    in_gap = book(capacity, **spring)
++    moved = book(capacity, **spring)
++
++    assert in_gap == [
++        {
++            "offset_months": 0,
++            "local": "2024-03-10T03:30:00-04:00",
++            "utc": "2024-03-10T07:30:00Z",
++        }
++    ]
++    # The next day has no gap, so the original 02:30 wall time is restored.
++    assert moved == [
++        {
++            "offset_months": 0,
++            "local": "2024-03-11T02:30:00-04:00",
++            "utc": "2024-03-11T06:30:00Z",
++        }
++    ]
++    assert capacity == {date(2024, 3, 10): 0}
++
++    fall_capacity = {date(2024, 11, 3): 1}
++    [ambiguous] = book(
++        fall_capacity, first_day=date(2024, 11, 3), hour=1, minute=30
++    )
++    assert ambiguous["local"] == "2024-11-03T01:30:00-04:00"
++    assert ambiguous["utc"] == "2024-11-03T05:30:00Z"
++    assert fall_capacity == {date(2024, 11, 3): 0}
++
++    paris_capacity = {date(2024, 3, 31): 1}
++    [paris] = book(
++        paris_capacity,
++        first_day=date(2024, 3, 31),
++        hour=2,
++        minute=30,
++        timezone="Europe/Paris",
++    )
++    assert paris["local"] == "2024-03-31T03:30:00+02:00"
++    assert paris["utc"] == "2024-03-31T01:30:00Z"
++    assert paris_capacity == {date(2024, 3, 31): 0}
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/scheduling.py b/trialops/scheduling.py
+--- a/trialops/scheduling.py	2026-11-13 20:17:29
++++ b/trialops/scheduling.py	2026-11-13 20:35:11
+@@ -3,10 +3,13 @@
+ from __future__ import annotations
+ 
+ import calendar
+-from collections.abc import Iterable, Mapping
++from collections.abc import Iterable, Mapping, MutableMapping
+ from datetime import date, datetime, timedelta, timezone as datetime_timezone
++from typing import Any
+ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+ 
++from trialops.eligibility import evaluate_subject
++
+ _ONE_DAY = timedelta(days=1)
+ _ZERO_DELTA = timedelta(0)
+ 
+@@ -146,4 +149,53 @@
+ 
+     return visits
+ 
++
++def book_subject_visits(
++    subject: Mapping[str, Any],
++    protocol: Mapping[str, Any],
++    *,
++    on: date,
++    first_day: date,
++    offsets_months: Iterable[int],
++    hour: int,
++    minute: int,
++    timezone: str,
++    capacity: MutableMapping[date, int],
++    closed_days: Iterable[date] | None = None,
++) -> list[dict[str, object]]:
++    """Plan visits for an eligible subject and reserve their capacity slots.
++
++    Eligibility is evaluated first; planning is delegated to ``plan_visits``.
++    ``capacity`` is only changed after the whole plan succeeded, and only for
++    dates it already lists. Any failure leaves it exactly as it was.
++    """
++    evaluation = evaluate_subject(subject, protocol, on)
++    if not evaluation["eligible"]:
++        raise ValueError("INELIGIBLE:" + ",".join(evaluation["reasons"]))
++
++    if not isinstance(capacity, MutableMapping):
++        raise TypeError("capacity must be a dict of dates to remaining slots")
++
++    visits = plan_visits(
++        first_day=first_day,
++        offsets_months=offsets_months,
++        hour=hour,
++        minute=minute,
++        timezone=timezone,
++        closed_days=closed_days,
++        capacity=capacity,
++    )
++
++    # Work out every new value before touching the caller's mapping, so the
++    # commit below cannot stop half-way.
++    updated: dict[date, int] = {}
++    for visit in visits:
++        visit_day = datetime.fromisoformat(str(visit["local"])).date()
++        if visit_day in capacity:
++            updated[visit_day] = updated.get(visit_day, capacity[visit_day]) - 1
++
++    for visit_day, slots in updated.items():
++        capacity[visit_day] = slots
++
++    return visits
+ 

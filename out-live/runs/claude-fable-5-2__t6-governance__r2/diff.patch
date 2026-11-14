@@ -1,0 +1,259 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_governance.py b/tests/test_governance.py
+--- a/tests/test_governance.py	2026-11-13 14:57:35
++++ b/tests/test_governance.py	2026-11-14 11:28:28
+@@ -179,3 +179,255 @@
+         apply_reuse_action(request("approved"), "submit", "alice", NOW)
+     with pytest.raises(ValueError, match="INVALID_NOW"):
+         apply_reuse_action(request(), "submit", "alice", datetime(2025, 1, 1))
++
++
++def _flag_only(value):
++    del value["privacy_plan"]
++    value["pseudonymized"] = True
++
++
++def _boolean_plan(value):
++    value["privacy_plan"] = True
++
++
++def _wrong_algorithm(value):
++    value["privacy_plan"]["algorithm"] = "sha256"
++
++
++def _domain_differs_from_purpose(value):
++    value["privacy_plan"]["domain"] = "another purpose"
++
++
++def _reordered_fields(value):
++    value["privacy_plan"]["fields"].reverse()
++
++
++def _extra_field(value):
++    value["privacy_plan"]["fields"].append("email")
++
++
++def _missing_field(value):
++    value["privacy_plan"]["fields"].pop()
++
++
++def _extra_key(value):
++    value["privacy_plan"]["salt"] = "synthetic"
++
++
++PLAN_MUTATIONS = [
++    _flag_only,
++    _boolean_plan,
++    _wrong_algorithm,
++    _domain_differs_from_purpose,
++    _reordered_fields,
++    _extra_field,
++    _missing_field,
++    _extra_key,
++]
++
++
++@pytest.mark.parametrize("mutate", PLAN_MUTATIONS, ids=lambda fn: fn.__name__)
++def test_approve_and_execute_require_the_exact_privacy_plan(mutate):
++    submitted = request("submitted")
++    mutate(submitted)
++    snapshot = deepcopy(submitted)
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(submitted, "approve", "bob", NOW)
++    assert str(caught.value) == "PSEUDONYMIZATION_REQUIRED"
++    assert submitted == snapshot
++
++    approved = request("approved", approval_expires_on="2025-02-01")
++    mutate(approved)
++    snapshot = deepcopy(approved)
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request)
++        return {"rows": 1}
++
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    assert str(caught.value) == "PSEUDONYMIZATION_REQUIRED"
++    assert calls == []
++    assert approved == snapshot
++
++
++def _not_representative(value):
++    value["metadata"]["representative"] = False
++
++
++def _missing_quality_score(value):
++    del value["metadata"]["quality_score"]
++
++
++def _no_metadata(value):
++    del value["metadata"]
++
++
++def _retention_passed(value):
++    value["retention_until"] = "2024-12-31"
++
++
++@pytest.mark.parametrize(
++    ("mutate", "code"),
++    [
++        (_not_representative, "METADATA_REQUIRED"),
++        (_missing_quality_score, "METADATA_REQUIRED"),
++        (_no_metadata, "METADATA_REQUIRED"),
++        (_retention_passed, "RETENTION_EXPIRED"),
++    ],
++    ids=lambda value: getattr(value, "__name__", value),
++)
++def test_execute_rechecks_policy_before_calling_the_executor(mutate, code):
++    approved = request("approved", approval_expires_on="2025-02-01")
++    mutate(approved)
++    snapshot = deepcopy(approved)
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request)
++        return {"rows": 1}
++
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    assert str(caught.value) == code
++    assert calls == []
++    assert approved == snapshot
++
++
++def test_repeated_execution_is_invalid_state_without_another_executor_call():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request["id"])
++        return {"rows": 1}
++
++    executed = apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    assert calls == ["reuse-001"]
++    snapshot = deepcopy(executed)
++
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(
++            executed, "execute", "alice", NOW + timedelta(hours=1), executor
++        )
++    assert str(caught.value) == "INVALID_STATE"
++    assert calls == ["reuse-001"]
++    assert executed == snapshot
++    assert [entry["action"] for entry in executed["history"]] == ["execute"]
++
++
++def test_executor_must_return_a_dict_or_execution_fails():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    snapshot = deepcopy(approved)
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request)
++        return ["not", "a", "dict"]
++
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    assert str(caught.value) == "EXECUTION_FAILED"
++    assert len(calls) == 1
++    assert approved == snapshot
++
++
++@pytest.mark.parametrize(
++    ("status", "changes", "action", "actor", "error", "code"),
++    [
++        ("draft", {}, "submit", "bob", PermissionError, None),
++        ("approved", {}, "submit", "alice", ValueError, "INVALID_STATE"),
++        ("draft", {}, "reject", "bob", ValueError, "INVALID_STATE"),
++        ("submitted", {"reviewer": "alice"}, "approve", "alice", ValueError, "SELF_REVIEW"),
++        (
++            "submitted",
++            {"retention_until": "2024-12-31"},
++            "approve",
++            "bob",
++            ValueError,
++            "RETENTION_EXPIRED",
++        ),
++        (
++            "approved",
++            {"approval_expires_on": "2024-12-31"},
++            "execute",
++            "alice",
++            ValueError,
++            "APPROVAL_EXPIRED",
++        ),
++        (
++            "approved",
++            {"approval_expires_on": "2025-02-01"},
++            "expire",
++            "system",
++            ValueError,
++            "INVALID_STATE",
++        ),
++        ("executed", {}, "expire", "system", ValueError, "INVALID_STATE"),
++    ],
++)
++def test_failed_actions_are_atomic(status, changes, action, actor, error, code):
++    candidate = request(
++        status, history=[{"action": "imported", "nested": {"value": 1}}], **changes
++    )
++    snapshot = deepcopy(candidate)
++    with pytest.raises(error) as caught:
++        apply_reuse_action(candidate, action, actor, NOW, successful_executor)
++    if code is not None:
++        assert str(caught.value) == code
++    assert candidate == snapshot
++
++
++def test_history_is_appended_in_order_with_offsets_normalized_to_utc():
++    plus_two = timezone(timedelta(hours=2))
++    plus_five = timezone(timedelta(hours=5))
++    original = request(history=[{"action": "imported", "actor": "loader"}])
++
++    submitted = apply_reuse_action(
++        original, "submit", "alice", datetime(2025, 1, 1, 14, 30, tzinfo=plus_two)
++    )
++    # 01:00 on 2 January at +05:00 is still 1 January in UTC.
++    approved = apply_reuse_action(
++        submitted, "approve", "bob", datetime(2025, 1, 2, 1, 0, tzinfo=plus_five)
++    )
++    assert approved["approval_expires_on"] == "2025-01-31"
++    expired = apply_reuse_action(
++        approved, "expire", "system", datetime(2025, 2, 1, 0, 0, tzinfo=timezone.utc)
++    )
++
++    assert expired["status"] == "expired"
++    assert expired["history"] == [
++        {"action": "imported", "actor": "loader"},
++        {"action": "submit", "actor": "alice", "at": "2025-01-01T12:30:00Z"},
++        {"action": "approve", "actor": "bob", "at": "2025-01-01T20:00:00Z"},
++        {"action": "expire", "actor": "system", "at": "2025-02-01T00:00:00Z"},
++    ]
++    stamps = [entry["at"] for entry in expired["history"][1:]]
++    assert stamps == sorted(stamps)
++    # Earlier results keep their own shorter histories.
++    assert len(original["history"]) == 1
++    assert len(submitted["history"]) == 2
++    assert len(approved["history"]) == 3
++
++
++def test_reject_records_history_and_blocks_later_execution():
++    submitted = request("submitted")
++    rejected = apply_reuse_action(submitted, "reject", "bob", NOW)
++    assert rejected["status"] == "rejected"
++    assert rejected["history"] == [
++        {"action": "reject", "actor": "bob", "at": "2025-01-01T12:00:00Z"}
++    ]
++    assert submitted["status"] == "submitted"
++    assert submitted["history"] == []
++
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request)
++        return {"rows": 1}
++
++    with pytest.raises(ValueError) as caught:
++        apply_reuse_action(rejected, "execute", "alice", NOW, executor)
++    assert str(caught.value) == "INVALID_STATE"
++    assert calls == []

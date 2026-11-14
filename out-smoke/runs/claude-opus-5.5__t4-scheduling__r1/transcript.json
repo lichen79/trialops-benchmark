@@ -1,0 +1,25 @@
+[
+ {
+  "call": 1,
+  "t": 10.05,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "tooluse_bSaJgoQNPSDBwbxjLcIEwV",
+    "name": "list_files",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 1916,
+   "output": 42,
+   "reasoning": 0,
+   "cache_read": 0,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_use",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ }
+]

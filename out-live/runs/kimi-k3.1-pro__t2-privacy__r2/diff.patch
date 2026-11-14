@@ -1,0 +1,182 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_privacy.py b/tests/test_privacy.py
+--- a/tests/test_privacy.py	2026-11-13 14:56:26
++++ b/tests/test_privacy.py	2026-11-14 11:16:20
+@@ -1,12 +1,12 @@
+ from copy import deepcopy
+-from datetime import date
++from datetime import date, datetime, timedelta, timezone
+ import hashlib
+ import hmac
+ import json
+ 
+ import pytest
+ 
+-from trialops.privacy import export_subjects
++from trialops.privacy import execute_reuse_export, export_subjects
+ 
+ 
+ ON = date(2024, 6, 15)
+@@ -158,3 +158,107 @@
+             )
+         assert "id" in str(caught.value)
+         assert invalid_id not in str(caught.value)
++
++
++def reuse_request(**changes):
++    purpose = changes.get("purpose", "research")
++    value = {
++        "id": "reuse-001",
++        "requester": "alice",
++        "reviewer": "bob",
++        "purpose": purpose,
++        "status": "approved",
++        "approval_expires_on": "2024-06-30",
++        "retention_until": "2024-06-30",
++        "privacy_plan": {
++            "algorithm": "hmac-sha256",
++            "domain": purpose,
++            "fields": ["pseudonym", "country", "birth_year", "visits"],
++        },
++        "metadata": {
++            "representative": True,
++            "complete": True,
++            "quality_score": 0.99,
++        },
++        "history": [{"action": "approve", "actor": "bob"}],
++    }
++    value.update(changes)
++    return value
++
++
++def test_execute_reuse_export_uses_approved_purpose_and_utc_date():
++    subject = make_subject(
++        "utc-boundary",
++        consents=[{"purpose": "research", "signed_on": "2024-06-16"}],
++    )
++    approved = reuse_request()
++    original = deepcopy(approved)
++    # At this offset, the UTC date is June 15 even though local time is June 16.
++    now = datetime(2024, 6, 16, 1, 0, tzinfo=timezone(timedelta(hours=12)))
++    expected = export_subjects(
++        [subject], purpose="research", secret="test-secret", on=date(2024, 6, 15)
++    )
++
++    executed = execute_reuse_export(
++        approved, [subject], actor="alice", secret="test-secret", now=now
++    )
++
++    assert executed["status"] == "executed"
++    assert executed["execution_result"] == expected
++    assert executed["execution_result"]["manifest"]["count"] == 0
++    assert executed["history"][-1] == {
++        "action": "execute",
++        "actor": "alice",
++        "at": "2024-06-15T13:00:00Z",
++    }
++    assert approved == original
++    assert "execution_result" not in approved
++
++    exported = canonical(executed["execution_result"])
++    history = canonical(executed["history"])
++    for sensitive in ("utc-boundary", "Fictional Person", "person@example.test", "test-secret"):
++        assert sensitive not in exported
++        assert sensitive not in history
++
++
++def test_reuse_export_failure_rolls_back_and_execution_is_not_repeated():
++    malformed = make_subject("sensitive-id", birth_date="not-a-date")
++    approved = reuse_request()
++    snapshot = deepcopy(approved)
++    now = datetime(2024, 6, 15, 12, 0, tzinfo=timezone.utc)
++
++    with pytest.raises(ValueError) as caught:
++        execute_reuse_export(
++            approved, [malformed], actor="alice", secret="test-secret", now=now
++        )
++    assert str(caught.value) == "EXECUTION_FAILED"
++    assert approved == snapshot
++    for sensitive in ("sensitive-id", "test-secret", "Fictional Person", "person@example.test"):
++        assert sensitive not in str(caught.value)
++        assert sensitive not in canonical(approved)
++
++    class CountingSubjects:
++        def __init__(self):
++            self.calls = 0
++
++        def __iter__(self):
++            self.calls += 1
++            yield make_subject("unused")
++
++    # Wrong actor and already-executed requests are governance failures, so
++    # neither path may advance the supplied subject collection.
++    for request_value, actor in (
++        (reuse_request(), "bob"),
++        (reuse_request(status="executed"), "alice"),
++    ):
++        subjects = CountingSubjects()
++        with pytest.raises((ValueError, PermissionError)) as caught:
++            execute_reuse_export(
++                request_value,
++                subjects,
++                actor=actor,
++                secret="test-secret",
++                now=now,
++            )
++        assert subjects.calls == 0
++        assert str(caught.value) in {"REQUESTER_REQUIRED", "INVALID_STATE"}
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/privacy.py b/trialops/privacy.py
+--- a/trialops/privacy.py	2026-11-13 20:17:29
++++ b/trialops/privacy.py	2026-11-14 11:15:58
+@@ -1,14 +1,16 @@
+ """Purpose-scoped, pseudonymized exports of fictional subject records."""
+ 
+ from collections.abc import Iterable, Mapping
+-from datetime import date, datetime
++from datetime import date, datetime, timezone
+ from typing import Any
+ import hashlib
+ import hmac
+ import json
+ import re
+ 
++from trialops.governance import apply_reuse_action
+ 
++
+ _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
+ 
+ 
+@@ -140,5 +142,34 @@
+             "sha256": hashlib.sha256(canonical_rows).hexdigest(),
+         },
+     }
++
++
++def execute_reuse_export(
++    request: dict[str, Any],
++    subjects: Iterable[Mapping[str, Any]],
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, Any]:
++    """Execute an approved reuse request against its purpose-scoped export."""
++
++    def executor(approved_request: dict[str, Any]) -> dict[str, Any]:
++        # Governance validates the timestamp before invoking this executor.
++        on = now.astimezone(timezone.utc).date()
++        return export_subjects(
++            subjects,
++            purpose=approved_request["purpose"],
++            secret=secret,
++            on=on,
++        )
++
++    return apply_reuse_action(
++        request,
++        "execute",
++        actor,
++        now,
++        executor=executor,
++    )
+ 
+ 

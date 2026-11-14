@@ -1,0 +1,114 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_eligibility.py b/tests/test_eligibility.py
+--- a/tests/test_eligibility.py	2026-11-13 14:56:26
++++ b/tests/test_eligibility.py	2026-11-13 20:28:08
+@@ -109,3 +109,110 @@
+ 
+     with pytest.raises(ValueError, match="on"):
+         evaluate_subject(make_subject(), make_protocol(), "2024-06-15")
++
++
++def test_no_usable_consent_reports_missing_and_no_version():
++    subject = make_subject()
++    subject["consents"] = []
++    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15)) == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++    # A consent signed the day after the evaluation date is not yet usable.
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-16"}]
++    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15)) == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++
++def test_retired_consent_of_required_version_is_reported_with_its_version():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2023-12-31"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": "v2",
++    }
++
++
++def test_age_changes_exactly_on_the_birthday():
++    protocol = make_protocol()
++    protocol["min_age"] = protocol["max_age"] = 24
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-01-01"}]
++
++    day_before_min = evaluate_subject(subject, protocol, date(2024, 6, 14))
++    last_day_at_max = evaluate_subject(subject, protocol, date(2025, 6, 14))
++    first_day_over_max = evaluate_subject(subject, protocol, date(2025, 6, 15))
++
++    assert day_before_min["reasons"] == ["AGE_BELOW_MIN"]
++    assert last_day_at_max["eligible"] is True
++    assert first_day_over_max["reasons"] == ["AGE_ABOVE_MAX"]
++
++
++def test_leap_day_birthday_in_leap_and_non_leap_years():
++    protocol = make_protocol()
++    protocol.update(
++        min_age=23,
++        max_age=23,
++        consent_valid_from="2020-01-01",
++        labs={},
++        exclusions=[],
++    )
++    subject = make_subject()
++    subject.update(
++        birth_date="2000-02-29",
++        consents=[{"version": "v2", "signed_on": "2020-01-01"}],
++        labs={},
++    )
++
++    def reasons(on):
++        return evaluate_subject(subject, protocol, on)["reasons"]
++
++    # Non-leap year: still 22 on 28 February, 23 from 1 March.
++    assert reasons(date(2023, 2, 28)) == ["AGE_BELOW_MIN"]
++    assert reasons(date(2023, 3, 1)) == []
++    # Leap year: still 23 on 28 February, 24 on 29 February itself.
++    assert reasons(date(2024, 2, 28)) == []
++    assert reasons(date(2024, 2, 29)) == ["AGE_ABOVE_MAX"]
++
++
++def test_missing_or_malformed_fields_never_leak_raw_exceptions():
++    on = date(2024, 6, 15)
++
++    subject = make_subject()
++    del subject["birth_date"]
++    with pytest.raises(ValueError, match="birth_date"):
++        evaluate_subject(subject, make_protocol(), on)
++
++    protocol = make_protocol()
++    del protocol["min_age"]
++    with pytest.raises(ValueError, match="min_age"):
++        evaluate_subject(make_subject(), protocol, on)
++
++    protocol = make_protocol()
++    protocol["consent_valid_from"] = "2024-01-01T00:00:00"
++    with pytest.raises(ValueError, match="consent_valid_from"):
++        evaluate_subject(make_subject(), protocol, on)
++
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-13-01"}]
++    with pytest.raises(ValueError, match="signed_on"):
++        evaluate_subject(subject, make_protocol(), on)
++
++    subject = make_subject()
++    subject["consents"] = [{"signed_on": "2024-06-15"}]
++    with pytest.raises(ValueError, match="version"):
++        evaluate_subject(subject, make_protocol(), on)
++
++    subject = make_subject()
++    subject["labs"]["A"] = "2"
++    with pytest.raises(ValueError, match=r"labs\.A"):
++        evaluate_subject(subject, make_protocol(), on)

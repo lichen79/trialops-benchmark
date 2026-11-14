@@ -1,0 +1,118 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-13 20:30:51
+@@ -1,5 +1,6 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+@@ -86,6 +87,106 @@
+     with pytest.raises(ValueError, match="MIXED_CASE"):
+         triage_events(
+             [event("A"), event("B", follow_up_of="A", event_code="OTHER")],
++            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
++        )
++
++
++@pytest.mark.parametrize(
++    ("level", "expected_days"),
++    [
++        ("fatal", 7),
++        ("life_threatening", 7),
++        ("hospitalization", 15),
++        ("other", 30),
++    ],
++)
++def test_reporting_offsets_use_earliest_onset(level, expected_days):
++    case = triage_events(
++        [
++            event("ROOT", onset="2024-02-01T00:00:00Z", seriousness=level),
++            event(
++                "FOLLOWUP",
++                follow_up_of="ROOT",
++                onset="2024-01-01T02:00:00+02:00",
++                seriousness="other",
++            ),
++        ],
++        now=datetime(2025, 1, 1, tzinfo=timezone.utc),
++    )[0]
++    expected_deadline = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(
++        days=expected_days
++    )
++    assert case["onset"] == "2024-01-01T00:00:00Z"
++    assert case["seriousness"] == level
++    assert case["report_by"] == expected_deadline.isoformat().replace(
++        "+00:00", "Z"
++    )
++
++
++def test_seriousness_precedence_is_independent_of_arrival_order():
++    levels = ["other", "hospitalization", "life_threatening", "fatal"]
++    events = [
++        event("ROOT", seriousness=levels[0]),
++        *[
++            event(
++                f"F{index}",
++                follow_up_of="ROOT",
++                seriousness=level,
++                onset=f"2024-01-{11 + index:02d}T00:00:00Z",
++            )
++            for index, level in enumerate(levels[1:], start=1)
++        ],
++    ]
++    case = triage_events(events, now=datetime(2025, 1, 1, tzinfo=timezone.utc))[0]
++    assert case["seriousness"] == "fatal"
++    # The root's earliest onset controls the clock, not the fatal follow-up's.
++    assert case["report_by"] == "2024-01-17T08:00:00Z"
++
++
++def test_followup_order_does_not_affect_case_output():
++    events = [
++        event("ROOT", seriousness="hospitalization", source="z-source"),
++        event(
++            "CHILD",
++            follow_up_of="ROOT",
++            seriousness="other",
++            onset="2024-01-09T00:00:00Z",
++            source="a-source",
++        ),
++        event(
++            "GRANDCHILD",
++            follow_up_of="CHILD",
++            seriousness="fatal",
++            onset="2024-01-12T00:00:00Z",
++            source="z-source",
++            uncertain=True,
++        ),
++        event("OTHER", onset="2024-01-10T00:00:00Z"),
++    ]
++    now = datetime(2024, 2, 1, tzinfo=timezone.utc)
++    expected = triage_events(events, now=now)
++    for ordering in permutations(events):
++        assert triage_events(ordering, now=now) == expected
++
++
++def test_overdue_is_strict_and_now_is_compared_in_utc():
++    onset = "2024-01-01T00:00:00Z"
++    report_by = datetime(2024, 1, 8, tzinfo=timezone.utc)
++    events = [event("A", onset=onset, seriousness="fatal")]
++
++    assert not triage_events(events, now=report_by)[0]["overdue"]
++    assert triage_events(events, now=report_by - report_by.resolution)[0][
++        "overdue"
++    ] is False
++    assert triage_events(events, now=report_by + report_by.resolution)[0]["overdue"]
++    offset_equal = report_by.astimezone(timezone(timedelta(hours=5, minutes=30)))
++    assert not triage_events(events, now=offset_equal)[0]["overdue"]
++
++
++def test_unknown_seriousness_is_rejected():
++    with pytest.raises(ValueError, match="^INVALID_SERIOUSNESS$"):
++        triage_events(
++            [event("A", seriousness="unknown")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
+ 

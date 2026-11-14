@@ -1,0 +1,176 @@
+[
+ {
+  "call": 1,
+  "t": 2.52,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "list_files_0",
+    "name": "list_files",
+    "arguments": "{\"path\": \".\"}"
+   }
+  ],
+  "usage": {
+   "input": 1092,
+   "output": 84,
+   "reasoning": 33,
+   "cache_read": 1085,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 4.72,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "read_file_1",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/governance.py\"}"
+   },
+   {
+    "id": "read_file_2",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_governance.py\"}"
+   },
+   {
+    "id": "read_file_3",
+    "name": "read_file",
+    "arguments": "{\"path\": \"README.md\"}"
+   },
+   {
+    "id": "read_file_4",
+    "name": "read_file",
+    "arguments": "{\"path\": \"pyproject.toml\"}"
+   }
+  ],
+  "usage": {
+   "input": 1261,
+   "output": 152,
+   "reasoning": 0,
+   "cache_read": 1254,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Synthetic data-reuse workflow with explicit, deterministic guardrails.\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport math\nfrom collections.abc import Mapping\nfrom datetime import date, datetime, timedelta, timezone\n\n_ACTIONS = {\"submit\", \"approve\", \"reject\", \"execute\", \"expire\"}\n_PRIVACY_FIELDS = [\"pseudonym\", \"country\", \"birth_year\", \"visits\"]\n\n\ndef _aware_utc(now: object) -> datetime:\n    if not isinstance(now, datetime):\n        raise ValueError(\"INVALID_NOW\")\n    try:\n        if now.tzinfo is None or now.utcoffset() is None:\n            raise ValueError(\"INVALID_NOW\")\n        return now.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(\"INVALID_NOW\") from exc\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n    states = (expected,) if isinstance(expected, str) else expected\n    if request.get(\"status\") not in states:\n        raise ValueError(\"INVALID_STATE\")\n\n\ndef _require_actor(actor: object, expected: object, code: str) -> None:\n    if actor != expected:\n        raise PermissionError(code)\n\n\ndef _date_field(request: Mapping[str, object], field: str, error_code: str) -> date:\n    value = request.get(field)\n    if not isinstance(value, str):\n        raise ValueError(error_code)\n    try:\n        return date.fromisoformat(value)\n    except ValueError as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _valid_quality_score(value: object) -> bool:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return False\n    return math.isfinite(value) and value >= 0.95\n\n\ndef _check_policy(request: Mapping[str, object], now_utc: datetime) -> None:\n    purpose = request.get(\"purpose\")\n    expected_privacy_plan = {\n        \"algorithm\": \"hmac-sha256\",\n        \"domain\": purpose,\n        \"fields\": _PRIVACY_FIELDS,\n    }\n    if request.get(\"privacy_plan\") != expected_privacy_plan:\n        raise ValueError(\"PSEUDONYMIZATION_REQUIRED\")\n\n    metadata = request.get(\"metadata\")\n    if (\n        not isinstance(metadata, Mapping)\n        or metadata.get(\"representative\") is not True\n        or metadata.get(\"complete\") is not True\n        or not _valid_quality_score(metadata.get(\"quality_score\"))\n        or not isinstance(purpose, str)\n        or not purpose.strip()\n    ):\n        raise ValueError(\"METADATA_REQUIRED\")\n\n    retention_until = _date_field(request, \"retention_until\", \"RETENTION_EXPIRED\")\n    if now_utc.date() > retention_until:\n        raise ValueError(\"RETENTION_EXPIRED\")\n\n\ndef _check_approval_current(request: Mapping[str, object], now_utc: datetime) -> None:\n    expires_on = _date_field(request, \"approval_expires_on\", \"APPROVAL_EXPIRED\")\n    if now_utc.date() > expires_on:\n        raise ValueError(\"APPROVAL_EXPIRED\")\n\n\ndef apply_reuse_action(\n    request: dict[str, object],\n    action: str,\n    actor: str,\n    now: datetime,",
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\n\nimport pytest\n\nfrom trialops.governance import apply_reuse_action\n\n\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\n\n\ndef request(status=\"draft\", **changes):\n    purpose = changes.get(\"purpose\", \"synthetic methods research\")\n    value = {\n        \"id\": \"reuse-001\",\n        \"requester\": \"alice\",\n        \"reviewer\": \"bob\",\n        \"purpose\": purpose,\n        \"status\": status,\n        \"retention_until\": \"2025-06-30\",\n        \"privacy_plan\": {\n            \"algorithm\": \"hmac-sha256\",\n            \"domain\": purpose,\n            \"fields\": [\"pseudonym\", \"country\", \"birth_year\", \"visits\"],\n        },\n        \"metadata\": {\n            \"representative\": True,\n            \"complete\": True,\n            \"quality_score\": 0.95,\n        },\n        \"history\": [],\n    }\n    value.update(changes)\n    return value\n\n\ndef successful_executor(approved_request):\n    return {\"receipt\": \"synthetic-execution-001\"}\n\n\ndef test_full_workflow_normalizes_history_and_deep_copies():\n    original = request(history=[{\"action\": \"imported\", \"nested\": {\"value\": 1}}])\n    snapshot = deepcopy(original)\n    executor_calls = []\n\n    def executor(approved_request):\n        executor_calls.append(approved_request)\n        approved_request[\"metadata\"][\"quality_score\"] = 0\n        return {\"rows\": 3}\n\n    submitted = apply_reuse_action(original, \"submit\", \"alice\", NOW)\n    assert original == snapshot\n    assert submitted is not original\n    assert submitted[\"metadata\"] is not original[\"metadata\"]\n    assert submitted[\"history\"][0] is not original[\"history\"][0]\n    assert submitted[\"history\"][-1] == {\n        \"action\": \"submit\",\n        \"actor\": \"alice\",\n        \"at\": \"2025-01-01T12:00:00Z\",\n    }\n\n    approved = apply_reuse_action(submitted, \"approve\", \"bob\", NOW + timedelta(days=1))\n    assert approved[\"approval_expires_on\"] == \"2025-02-01\"\n    executed = apply_reuse_action(\n        approved, \"execute\", \"alice\", NOW + timedelta(days=2), executor\n    )\n    assert executed[\"status\"] == \"executed\"\n    assert executed[\"execution_result\"] == {\"rows\": 3}\n    assert len(executor_calls) == 1\n    assert executor_calls[0][\"status\"] == \"approved\"\n    assert approved[\"status\"] == \"approved\"\n    assert approved[\"metadata\"][\"quality_score\"] == 0.95\n    assert \"execution_result\" not in approved\n    assert [entry[\"action\"] for entry in executed[\"history\"][-3:]] == [\n        \"submit\",\n        \"approve\",\n        \"execute\",\n    ]\n    assert [entry[\"at\"] for entry in executed[\"history\"][-3:]] == [\n        \"2025-01-01T12:00:00Z\",\n        \"2025-01-02T12:00:00Z\",\n        \"2025-01-03T12:00:00Z\",\n    ]\n\n\n@pytest.mark.parametrize(\n    (\"status\", \"action\", \"actor\"),\n    [\n        (\"draft\", \"submit\", \"bob\"),\n        (\"submitted\", \"approve\", \"alice\"),\n        (\"submitted\", \"reject\", \"alice\"),\n        (\"approved\", \"execute\", \"bob\"),\n    ],\n)\ndef test_invalid_roles_raise_permission_error(status, action, actor):\n    candidate = request(status,",
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n",
+   "[build-system]\nrequires = [\"setuptools>=61\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"trialops\"\nrequires-python = \">=3.11,<3.12\"\ndependencies = [\"tzdata==2025.2\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 7.11,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "run_tests_5",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 4633,
+   "output": 77,
+   "reasoning": 41,
+   "cache_read": 1254,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n...............................................                          [100%]\n47 passed in 0.05s\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 17.68,
+  "content": "The governance workflow and its requested tests are already present. I’m checking the amended execution and atomicity edge cases before concluding.",
+  "tool_calls": [
+   {
+    "id": "read_file_6",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/__init__.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 4719,
+   "output": 2372,
+   "reasoning": 2291,
+   "cache_read": 4626,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Synthetic trial-operations helpers used by the Bedrock coding benchmark.\"\"\"\n"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 20.15,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "read_file_7",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/privacy.py\"}"
+   },
+   {
+    "id": "read_file_8",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/audit.py\"}"
+   },
+   {
+    "id": "read_file_9",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/scheduling.py\"}"
+   },
+   {
+    "id": "read_file_10",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_smoke.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 4842,
+   "output": 157,
+   "reasoning": 0,
+   "cache_read": 4712,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Purpose-scoped, pseudonymized exports of fictional subject records.\"\"\"\n\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime\nfrom typing import Any\nimport hashlib\nimport hmac\nimport json\nimport re\n\n\n_ID_PATTERN = re.compile(r\"[A-Za-z0-9_-]+\\Z\")\n\n\ndef _field(record: Mapping[str, Any], name: str) -> Any:\n    try:\n        return record[name]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {name}\") from None\n\n\ndef _date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _text(value: Any, field: str, *, nonempty: bool = False) -> str:\n    if not isinstance(value, str) or (nonempty and not value):\n        qualifier = \"a non-empty\" if nonempty else \"a\"\n        raise ValueError(f\"{field} must be {qualifier} string\")\n    return value\n\n\ndef export_subjects(\n    subjects: Iterable[Mapping[str, Any]], *, purpose: str, secret: str, on: date\n) -> dict[str, Any]:\n    \"\"\"Export only active, unpurged records without direct identifiers.\"\"\"\n\n    purpose = _text(purpose, \"purpose\", nonempty=True)\n    secret = _text(secret, \"secret\", nonempty=True)\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n    if isinstance(subjects, (str, bytes, Mapping)) or not isinstance(\n        subjects, Iterable\n    ):\n        raise ValueError(\"subjects must be an iterable of records\")\n\n    try:\n        secret_bytes = secret.encode(\"utf-8\")\n        purpose.encode(\"utf-8\")\n    except UnicodeError:\n        raise ValueError(\"purpose and secret must contain valid Unicode\") from None\n\n    rows: list[dict[str, Any]] = []\n    seen_ids: set[str] = set()\n\n    for subject in subjects:\n        if not isinstance(subject, Mapping):\n            raise ValueError(\"each subject must be a mapping\")\n\n        subject_id = _text(_field(subject, \"id\"), \"id\", nonempty=True)\n        if _ID_PATTERN.fullmatch(subject_id) is None:\n            raise ValueError(\"id must match [A-Za-z0-9_-]+\")\n        if subject_id in seen_ids:\n            raise ValueError(\"DUPLICATE_SUBJECT_ID\")\n        seen_ids.add(subject_id)\n\n        _text(_field(subject, \"name\"), \"name\")\n        birth_date = _date(_field(subject, \"birth_date\"), \"birth_date\")\n        _text(_field(subject, \"email\"), \"email\")\n        country = _text(_field(subject, \"country\"), \"country\")\n\n        visits_value = _field(subject, \"visits\")\n        if not isinstance(visits_value, list):\n            raise ValueError(\"visits must be a list\")\n        visits = sorted(\n            (_date(value, \"visits\") for value in visits_value),\n            key=lambda value: value,\n        )\n\n        consents_value = _field(subject, \"consents\")\n        if not isinstance(consents_value, list):\n            raise ValueError",
+   "\"\"\"A small tamper-evident chain for synthetic operational events.\"\"\"\n\nfrom copy import deepcopy\nfrom datetime import datetime, timezone\nimport hashlib\nimport json\nimport re\nfrom typing import Any\n\nGENESIS_HASH = \"0\" * 64\n\n_HASH_PATTERN = re.compile(r\"[0-9a-f]{64}\\Z\")\n_TIMESTAMP_PATTERN = re.compile(\n    r\"([0-9]{4})-([0-9]{2})-([0-9]{2})T\"\n    r\"([0-9]{2}):([0-9]{2}):([0-9]{2})Z\\Z\"\n)\n_REQUIRED_FIELDS = frozenset(\n    {\"sequence\", \"event_id\", \"actor\", \"action\", \"at\", \"payload\", \"previous_hash\"}\n)\n\n\ndef _canonical(value: Any) -> str:\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef _valid_hash(value: Any) -> bool:\n    return isinstance(value, str) and _HASH_PATTERN.fullmatch(value) is not None\n\n\ndef _parse_timestamp(value: Any) -> datetime | None:\n    if not isinstance(value, str):\n        return None\n    match = _TIMESTAMP_PATTERN.fullmatch(value)\n    if match is None:\n        return None\n    try:\n        year, month, day, hour, minute, second = (\n            int(part) for part in match.groups()\n        )\n        return datetime(\n            year, month, day, hour, minute, second, tzinfo=timezone.utc\n        )\n    except (ValueError, OverflowError):\n        return None\n\n\ndef _utc_timestamp(value: Any) -> str:\n    if not isinstance(value, datetime):\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    try:\n        offset = value.utcoffset()\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at must be a timezone-aware datetime\") from None\n    if value.tzinfo is None or offset is None:\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    if value.microsecond:\n        raise ValueError(\"at must not contain microseconds\")\n    try:\n        normalized = value.astimezone(timezone.utc)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at cannot be normalized to UTC\") from None\n    return normalized.isoformat(timespec=\"seconds\").replace(\"+00:00\", \"Z\")\n\n\ndef _nonempty_string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\nclass AuditChain:\n    \"\"\"Maintain an append-only sequence whose record hashes are linkable.\"\"\"\n\n    def __init__(self) -> None:\n        self.previous_hash = GENESIS_HASH\n        self.records: list[dict[str, Any]] = []\n        self._event_ids: set[str] = set()\n\n\n    def head(self) -> str:\n        \"\"\"Return the current trusted head, or the genesis hash when empty.\"\"\"\n\n        return self.previous_hash\n\n    def append(\n        self,\n        *,\n        event_id: str,\n        actor: str,\n        action: str,\n        at: datetime,\n        payload: dict[str, Any],\n    ) -> dict[str, Any]:\n        \"\"\"Append and return one canonical, hashed audit record.\"\"\"\n\n        event_id = _nonempty_string(event_id, \"event_id\")\n        actor = _nonemp",
+   "\"\"\"Deterministic protocol-visit scheduling for synthetic trial data.\"\"\"\n\nfrom __future__ import annotations\n\nimport calendar\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime, timedelta, timezone as datetime_timezone\nfrom zoneinfo import ZoneInfo, ZoneInfoNotFoundError\n\n_ONE_DAY = timedelta(days=1)\n_ZERO_DELTA = timedelta(0)\n\n\ndef _plain_integer(value: object) -> bool:\n    return isinstance(value, int) and not isinstance(value, bool)\n\n\ndef _require_day(value: object, field: str) -> date:\n    if isinstance(value, datetime) or not isinstance(value, date):\n        raise TypeError(f\"{field} must contain datetime.date values\")\n    return value\n\n\ndef _add_months(original: date, offset: int) -> date:\n    month_index = original.year * 12 + original.month - 1 + offset\n    year, zero_based_month = divmod(month_index, 12)\n    if not 1 <= year <= 9999:\n        raise ValueError(\"OFFSET_OUT_OF_RANGE\")\n    month = zero_based_month + 1\n    day = min(original.day, calendar.monthrange(year, month)[1])\n    return date(year, month, day)\n\n\ndef _localize(day: date, hour: int, minute: int, zone: ZoneInfo) -> datetime:\n    \"\"\"Attach a zone, shifting gaps by their actual size and preferring fold=0.\"\"\"\n    wall = datetime(\n        day.year,\n        day.month,\n        day.day,\n        hour,\n        minute,\n        tzinfo=zone,\n        fold=0,\n    )\n    offset_at_fold_zero = wall.utcoffset()\n    offset_at_fold_one = wall.replace(fold=1).utcoffset()\n    # ZoneInfo always supplies both offsets. A positive difference identifies a\n    # gap; a negative difference is an ambiguous time, for which fold=0 wins.\n    if offset_at_fold_zero is None or offset_at_fold_one is None:\n        raise ValueError(\"INVALID_LOCAL_TIME\")\n    gap = offset_at_fold_one - offset_at_fold_zero\n    if gap > _ZERO_DELTA:\n        wall = (wall.replace(tzinfo=None) + gap).replace(tzinfo=zone, fold=0)\n    return wall\n\n\ndef plan_visits(\n    *,\n    first_day: date,\n    offsets_months: Iterable[int],\n    hour: int,\n    minute: int,\n    timezone: str,\n    closed_days: Iterable[date] | None = None,\n    capacity: Mapping[date, int] | None = None,\n) -> list[dict[str, object]]:\n    \"\"\"Plan visits in protocol order without modifying caller-owned mappings.\"\"\"\n    _require_day(first_day, \"first_day\")\n\n    try:\n        offsets = tuple(offsets_months)\n    except TypeError as exc:\n        raise TypeError(\"offsets_months must be an iterable of integers\") from exc\n\n    seen_offsets: set[int] = set()\n    for offset in offsets:\n        if not _plain_integer(offset) or offset < 0:\n            raise ValueError(\"INVALID_OFFSET\")\n        if offset in seen_offsets:\n            raise ValueError(\"DUPLICATE_OFFSET\")\n        seen_offsets.add(offset)\n\n    if not _plain_integer(hour) or not 0 <= hour <= 23:\n        raise ValueError(\"INVALID_HOUR\")\n    if not _plain_integer(minute) or not 0 <= minute <= 59:\n        raise ValueError(\"INVALID_MINUTE\")\n    if not isinstance(timezone, str) or not timezone:\n    ",
+   "def test_trialops_package_imports():\n    import trialops\n    assert trialops.__doc__\n"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 32.47,
+  "content": "The implementation already satisfies the amended privacy-plan, executor, and atomicity requirements, including repeat-execution protection. The full test suite passes without further changes.",
+  "tool_calls": [
+   {
+    "id": "finish_11",
+    "name": "finish",
+    "arguments": "{\"summary\": \"Verified the governance workflow implements exact privacy-plan checks, role/state enforcement, UTC history, deep-copy isolation, atomic executor handling, and expiry rules. All 47 tests pass.\"}"
+   }
+  ],
+  "usage": {
+   "input": 9277,
+   "output": 2623,
+   "reasoning": 2508,
+   "cache_read": 4835,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "ok"
+  ]
+ }
+]

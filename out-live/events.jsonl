@@ -1,0 +1,144 @@
+{"t": 1794651296.505, "kind": "run_start", "run_id": "kimi-k3.1-pro__t1-eligibility__r2", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 2}
+{"t": 1794651296.511, "kind": "run_start", "run_id": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 1}
+{"t": 1794651296.513, "kind": "run_start", "run_id": "glm-5.3__t1-eligibility__r3", "model": "glm-5.3", "task": "t1-eligibility", "rep": 3}
+{"t": 1794651296.513, "kind": "run_start", "run_id": "kimi-k3.1-pro__t1-eligibility__r3", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 3}
+{"t": 1794651296.514, "kind": "run_start", "run_id": "glm-5.3__t1-eligibility__r2", "model": "glm-5.3", "task": "t1-eligibility", "rep": 2}
+{"t": 1794651296.515, "kind": "run_start", "run_id": "glm-5.3__t1-eligibility__r1", "model": "glm-5.3", "task": "t1-eligibility", "rep": 1}
+{"t": 1794651296.715, "kind": "run_start", "run_id": "claude-opus-5.5__t1-eligibility__r2", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 2}
+{"t": 1794651296.715, "kind": "run_start", "run_id": "claude-fable-5-2__t1-eligibility__r1", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 1}
+{"t": 1794651296.716, "kind": "run_start", "run_id": "claude-fable-5-2__t1-eligibility__r3", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 3}
+{"t": 1794651296.716, "kind": "run_start", "run_id": "claude-fable-5-2__t1-eligibility__r2", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 2}
+{"t": 1794651296.716, "kind": "run_start", "run_id": "claude-opus-5.5__t1-eligibility__r3", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 3}
+{"t": 1794651296.717, "kind": "run_start", "run_id": "claude-opus-5.5__t1-eligibility__r1", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 1}
+{"t": 1794651319.779, "kind": "run_end", "run_id": "kimi-k3.1-pro__t1-eligibility__r2", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 2, "passed": true, "stop": "finish", "calls": 4, "usd": 0.09524, "wall_s": 22.95}
+{"t": 1794651319.779, "kind": "run_start", "run_id": "kimi-k3.1-pro__t2-privacy__r2", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 2}
+{"t": 1794651324.64, "kind": "run_end", "run_id": "kimi-k3.1-pro__t1-eligibility__r1", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 1, "passed": true, "stop": "finish", "calls": 4, "usd": 0.134139, "wall_s": 27.81}
+{"t": 1794651324.64, "kind": "run_start", "run_id": "kimi-k3.1-pro__t2-privacy__r1", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 1}
+{"t": 1794651325.82, "kind": "run_end", "run_id": "kimi-k3.1-pro__t1-eligibility__r3", "model": "kimi-k3.1-pro", "task": "t1-eligibility", "rep": 3, "passed": true, "stop": "finish", "calls": 5, "usd": 0.135347, "wall_s": 29.01}
+{"t": 1794651325.82, "kind": "run_start", "run_id": "kimi-k3.1-pro__t2-privacy__r3", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 3}
+{"t": 1794651336.683, "kind": "run_end", "run_id": "claude-opus-5.5__t1-eligibility__r2", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 0.197683, "wall_s": 39.63}
+{"t": 1794651336.683, "kind": "run_start", "run_id": "claude-opus-5.5__t2-privacy__r2", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 2}
+{"t": 1794651341.696, "kind": "run_end", "run_id": "claude-opus-5.5__t1-eligibility__r3", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 3, "passed": true, "stop": "finish", "calls": 6, "usd": 0.220475, "wall_s": 44.67}
+{"t": 1794651341.696, "kind": "run_start", "run_id": "claude-opus-5.5__t2-privacy__r3", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 3}
+{"t": 1794651343.696, "kind": "run_end", "run_id": "claude-opus-5.5__t1-eligibility__r1", "model": "claude-opus-5.5", "task": "t1-eligibility", "rep": 1, "passed": true, "stop": "finish", "calls": 6, "usd": 0.23287, "wall_s": 46.68}
+{"t": 1794651343.696, "kind": "run_start", "run_id": "claude-opus-5.5__t2-privacy__r1", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 1}
+{"t": 1794651381.352, "kind": "run_end", "run_id": "claude-fable-5-2__t1-eligibility__r1", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 1, "passed": true, "stop": "finish", "calls": 5, "usd": 0.577136, "wall_s": 84.28}
+{"t": 1794651381.352, "kind": "run_start", "run_id": "claude-fable-5-2__t2-privacy__r1", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 1}
+{"t": 1794651386.576, "kind": "run_end", "run_id": "kimi-k3.1-pro__t2-privacy__r2", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 2, "passed": true, "stop": "finish", "calls": 12, "usd": 0.301462, "wall_s": 66.44}
+{"t": 1794651386.576, "kind": "run_start", "run_id": "kimi-k3.1-pro__t3-audit__r2", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 2}
+{"t": 1794651388.073, "kind": "run_end", "run_id": "kimi-k3.1-pro__t2-privacy__r3", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 3, "passed": true, "stop": "finish", "calls": 14, "usd": 0.234206, "wall_s": 61.77}
+{"t": 1794651388.073, "kind": "run_start", "run_id": "kimi-k3.1-pro__t3-audit__r3", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 3}
+{"t": 1794651388.202, "kind": "run_end", "run_id": "kimi-k3.1-pro__t2-privacy__r1", "model": "kimi-k3.1-pro", "task": "t2-privacy", "rep": 1, "passed": true, "stop": "finish", "calls": 16, "usd": 0.249703, "wall_s": 63.09}
+{"t": 1794651388.202, "kind": "run_start", "run_id": "kimi-k3.1-pro__t3-audit__r1", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 1}
+{"t": 1794651397.419, "kind": "run_end", "run_id": "claude-fable-5-2__t1-eligibility__r2", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 0.663424, "wall_s": 100.37}
+{"t": 1794651397.419, "kind": "run_start", "run_id": "claude-fable-5-2__t2-privacy__r2", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 2}
+{"t": 1794651403.069, "kind": "run_end", "run_id": "claude-fable-5-2__t1-eligibility__r3", "model": "claude-fable-5-2", "task": "t1-eligibility", "rep": 3, "passed": true, "stop": "finish", "calls": 5, "usd": 0.672256, "wall_s": 106.01}
+{"t": 1794651403.069, "kind": "run_start", "run_id": "claude-fable-5-2__t2-privacy__r3", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 3}
+{"t": 1794651418.595, "kind": "run_end", "run_id": "kimi-k3.1-pro__t3-audit__r2", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 2, "passed": true, "stop": "finish", "calls": 8, "usd": 0.135512, "wall_s": 31.68}
+{"t": 1794651418.595, "kind": "run_start", "run_id": "kimi-k3.1-pro__t4-scheduling__r2", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 2}
+{"t": 1794651425.079, "kind": "run_end", "run_id": "claude-opus-5.5__t2-privacy__r1", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 1, "passed": false, "stop": "finish", "calls": 7, "usd": 0.505485, "wall_s": 81.02}
+{"t": 1794651425.079, "kind": "run_start", "run_id": "claude-opus-5.5__t3-audit__r1", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 1}
+{"t": 1794651429.557, "kind": "run_end", "run_id": "kimi-k3.1-pro__t3-audit__r3", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 3, "passed": false, "stop": "finish", "calls": 7, "usd": 0.162977, "wall_s": 41.11}
+{"t": 1794651429.557, "kind": "run_start", "run_id": "kimi-k3.1-pro__t4-scheduling__r3", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 3}
+{"t": 1794651431.144, "kind": "run_end", "run_id": "claude-opus-5.5__t2-privacy__r2", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 2, "passed": false, "stop": "finish", "calls": 9, "usd": 0.658728, "wall_s": 94.1}
+{"t": 1794651431.144, "kind": "run_start", "run_id": "claude-opus-5.5__t3-audit__r2", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 2}
+{"t": 1794651439.292, "kind": "run_end", "run_id": "kimi-k3.1-pro__t3-audit__r1", "model": "kimi-k3.1-pro", "task": "t3-audit", "rep": 1, "passed": true, "stop": "finish", "calls": 9, "usd": 0.210815, "wall_s": 50.73}
+{"t": 1794651439.292, "kind": "run_start", "run_id": "kimi-k3.1-pro__t4-scheduling__r1", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 1}
+{"t": 1794651449.567, "kind": "run_end", "run_id": "claude-opus-5.5__t2-privacy__r3", "model": "claude-opus-5.5", "task": "t2-privacy", "rep": 3, "passed": false, "stop": "finish", "calls": 9, "usd": 0.701998, "wall_s": 107.51}
+{"t": 1794651449.567, "kind": "run_start", "run_id": "claude-opus-5.5__t3-audit__r3", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 3}
+{"t": 1794651458.32, "kind": "run_end", "run_id": "claude-opus-5.5__t3-audit__r1", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 1, "passed": true, "stop": "finish", "calls": 5, "usd": 0.203452, "wall_s": 32.86}
+{"t": 1794651458.32, "kind": "run_start", "run_id": "claude-opus-5.5__t4-scheduling__r1", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 1}
+{"t": 1794651471.589, "kind": "run_end", "run_id": "glm-5.3__t1-eligibility__r2", "model": "glm-5.3", "task": "t1-eligibility", "rep": 2, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.348257, "wall_s": 175.03}
+{"t": 1794651471.589, "kind": "run_start", "run_id": "glm-5.3__t2-privacy__r2", "model": "glm-5.3", "task": "t2-privacy", "rep": 2}
+{"t": 1794651482.701, "kind": "run_end", "run_id": "claude-opus-5.5__t3-audit__r2", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 2, "passed": true, "stop": "finish", "calls": 6, "usd": 0.274547, "wall_s": 51.21}
+{"t": 1794651482.701, "kind": "run_start", "run_id": "claude-opus-5.5__t4-scheduling__r2", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 2}
+{"t": 1794651490.484, "kind": "run_end", "run_id": "kimi-k3.1-pro__t4-scheduling__r1", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 1, "passed": false, "stop": "finish", "calls": 10, "usd": 0.24425, "wall_s": 50.85}
+{"t": 1794651490.484, "kind": "run_start", "run_id": "kimi-k3.1-pro__t5-safety__r1", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 1}
+{"t": 1794651514.543, "kind": "run_end", "run_id": "claude-opus-5.5__t3-audit__r3", "model": "claude-opus-5.5", "task": "t3-audit", "rep": 3, "passed": true, "stop": "finish", "calls": 6, "usd": 0.306627, "wall_s": 64.58}
+{"t": 1794651514.543, "kind": "run_start", "run_id": "claude-opus-5.5__t4-scheduling__r3", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 3}
+{"t": 1794651514.573, "kind": "run_end", "run_id": "kimi-k3.1-pro__t4-scheduling__r2", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 2, "passed": false, "stop": "finish", "calls": 21, "usd": 0.418083, "wall_s": 95.61}
+{"t": 1794651514.574, "kind": "run_start", "run_id": "kimi-k3.1-pro__t5-safety__r2", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 2}
+{"t": 1794651531.393, "kind": "run_end", "run_id": "kimi-k3.1-pro__t5-safety__r1", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 1, "passed": true, "stop": "finish", "calls": 9, "usd": 0.185896, "wall_s": 40.56}
+{"t": 1794651531.393, "kind": "run_start", "run_id": "kimi-k3.1-pro__t6-governance__r1", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 1}
+{"t": 1794651532.506, "kind": "run_end", "run_id": "kimi-k3.1-pro__t4-scheduling__r3", "model": "kimi-k3.1-pro", "task": "t4-scheduling", "rep": 3, "passed": false, "stop": "finish", "calls": 29, "usd": 0.360077, "wall_s": 102.59}
+{"t": 1794651532.506, "kind": "run_start", "run_id": "kimi-k3.1-pro__t5-safety__r3", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 3}
+{"t": 1794651534.254, "kind": "run_end", "run_id": "claude-opus-5.5__t4-scheduling__r1", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 1, "passed": true, "stop": "finish", "calls": 8, "usd": 0.502317, "wall_s": 75.58}
+{"t": 1794651534.254, "kind": "run_start", "run_id": "claude-opus-5.5__t5-safety__r1", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 1}
+{"t": 1794651560.867, "kind": "run_end", "run_id": "kimi-k3.1-pro__t5-safety__r2", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 2, "passed": true, "stop": "finish", "calls": 11, "usd": 0.196685, "wall_s": 45.96}
+{"t": 1794651560.867, "kind": "run_start", "run_id": "kimi-k3.1-pro__t6-governance__r2", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 2}
+{"t": 1794651567.559, "kind": "run_end", "run_id": "kimi-k3.1-pro__t5-safety__r3", "model": "kimi-k3.1-pro", "task": "t5-safety", "rep": 3, "passed": true, "stop": "finish", "calls": 8, "usd": 0.142789, "wall_s": 34.75}
+{"t": 1794651567.56, "kind": "run_start", "run_id": "kimi-k3.1-pro__t6-governance__r3", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 3}
+{"t": 1794651573.6, "kind": "run_end", "run_id": "kimi-k3.1-pro__t6-governance__r1", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 1, "passed": true, "stop": "finish", "calls": 6, "usd": 0.192837, "wall_s": 41.9}
+{"t": 1794651578.073, "kind": "run_end", "run_id": "kimi-k3.1-pro__t6-governance__r2", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 2, "passed": true, "stop": "finish", "calls": 4, "usd": 0.063914, "wall_s": 16.77}
+{"t": 1794651588.29, "kind": "run_end", "run_id": "claude-opus-5.5__t5-safety__r1", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 1, "passed": true, "stop": "finish", "calls": 6, "usd": 0.300269, "wall_s": 53.66}
+{"t": 1794651588.29, "kind": "run_start", "run_id": "claude-opus-5.5__t6-governance__r1", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 1}
+{"t": 1794651595.746, "kind": "run_end", "run_id": "claude-fable-5-2__t2-privacy__r2", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 1.353136, "wall_s": 197.87}
+{"t": 1794651595.747, "kind": "run_start", "run_id": "claude-fable-5-2__t3-audit__r2", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 2}
+{"t": 1794651600.362, "kind": "run_end", "run_id": "kimi-k3.1-pro__t6-governance__r3", "model": "kimi-k3.1-pro", "task": "t6-governance", "rep": 3, "passed": true, "stop": "finish", "calls": 6, "usd": 0.145085, "wall_s": 32.47}
+{"t": 1794651621.166, "kind": "run_end", "run_id": "claude-fable-5-2__t2-privacy__r1", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 1, "passed": true, "stop": "finish", "calls": 7, "usd": 1.946296, "wall_s": 239.45}
+{"t": 1794651621.166, "kind": "run_start", "run_id": "claude-fable-5-2__t3-audit__r1", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 1}
+{"t": 1794651627.087, "kind": "run_end", "run_id": "claude-opus-5.5__t4-scheduling__r2", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 2, "passed": true, "stop": "finish", "calls": 13, "usd": 1.073948, "wall_s": 144.03}
+{"t": 1794651627.087, "kind": "run_start", "run_id": "claude-opus-5.5__t5-safety__r2", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 2}
+{"t": 1794651632.014, "kind": "run_end", "run_id": "glm-5.3__t1-eligibility__r3", "model": "glm-5.3", "task": "t1-eligibility", "rep": 3, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.569491, "wall_s": 335.19}
+{"t": 1794651632.014, "kind": "run_start", "run_id": "glm-5.3__t2-privacy__r3", "model": "glm-5.3", "task": "t2-privacy", "rep": 3}
+{"t": 1794651635.477, "kind": "run_end", "run_id": "claude-opus-5.5__t6-governance__r1", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 1, "passed": true, "stop": "finish", "calls": 6, "usd": 0.306539, "wall_s": 46.87}
+{"t": 1794651637.184, "kind": "run_end", "run_id": "claude-opus-5.5__t4-scheduling__r3", "model": "claude-opus-5.5", "task": "t4-scheduling", "rep": 3, "passed": false, "stop": "finish", "calls": 13, "usd": 1.099899, "wall_s": 122.62}
+{"t": 1794651637.184, "kind": "run_start", "run_id": "claude-opus-5.5__t5-safety__r3", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 3}
+{"t": 1794651677.796, "kind": "run_end", "run_id": "claude-opus-5.5__t5-safety__r2", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 0.234652, "wall_s": 50.35}
+{"t": 1794651677.796, "kind": "run_start", "run_id": "claude-opus-5.5__t6-governance__r2", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 2}
+{"t": 1794651684.062, "kind": "run_end", "run_id": "claude-fable-5-2__t2-privacy__r3", "model": "claude-fable-5-2", "task": "t2-privacy", "rep": 3, "passed": true, "stop": "finish", "calls": 7, "usd": 2.05668, "wall_s": 280.66}
+{"t": 1794651684.062, "kind": "run_start", "run_id": "claude-fable-5-2__t3-audit__r3", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 3}
+{"t": 1794651702.631, "kind": "run_end", "run_id": "claude-fable-5-2__t3-audit__r1", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 1, "passed": true, "stop": "finish", "calls": 4, "usd": 0.591824, "wall_s": 81.12}
+{"t": 1794651702.631, "kind": "run_start", "run_id": "claude-fable-5-2__t4-scheduling__r1", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 1}
+{"t": 1794651706.933, "kind": "run_end", "run_id": "claude-fable-5-2__t3-audit__r2", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 2, "passed": true, "stop": "finish", "calls": 4, "usd": 0.76516, "wall_s": 110.79}
+{"t": 1794651706.933, "kind": "run_start", "run_id": "claude-fable-5-2__t4-scheduling__r2", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 2}
+{"t": 1794651722.522, "kind": "run_end", "run_id": "claude-opus-5.5__t6-governance__r2", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 2, "passed": true, "stop": "finish", "calls": 6, "usd": 0.291183, "wall_s": 44.33}
+{"t": 1794651750.914, "kind": "run_end", "run_id": "claude-opus-5.5__t5-safety__r3", "model": "claude-opus-5.5", "task": "t5-safety", "rep": 3, "passed": true, "stop": "finish", "calls": 9, "usd": 0.653426, "wall_s": 113.42}
+{"t": 1794651750.914, "kind": "run_start", "run_id": "claude-opus-5.5__t6-governance__r3", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 3}
+{"t": 1794651767.31, "kind": "run_end", "run_id": "claude-fable-5-2__t3-audit__r3", "model": "claude-fable-5-2", "task": "t3-audit", "rep": 3, "passed": true, "stop": "finish", "calls": 4, "usd": 0.603872, "wall_s": 82.81}
+{"t": 1794651767.31, "kind": "run_start", "run_id": "claude-fable-5-2__t4-scheduling__r3", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 3}
+{"t": 1794651788.439, "kind": "run_end", "run_id": "claude-opus-5.5__t6-governance__r3", "model": "claude-opus-5.5", "task": "t6-governance", "rep": 3, "passed": true, "stop": "finish", "calls": 5, "usd": 0.216313, "wall_s": 37.19}
+{"t": 1794651797.91, "kind": "run_end", "run_id": "claude-fable-5-2__t4-scheduling__r1", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 1, "passed": true, "stop": "finish", "calls": 4, "usd": 0.659336, "wall_s": 94.92}
+{"t": 1794651797.91, "kind": "run_start", "run_id": "claude-fable-5-2__t5-safety__r1", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 1}
+{"t": 1794651831.131, "kind": "run_end", "run_id": "claude-fable-5-2__t4-scheduling__r2", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 0.913064, "wall_s": 123.86}
+{"t": 1794651831.131, "kind": "run_start", "run_id": "claude-fable-5-2__t5-safety__r2", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 2}
+{"t": 1794651861.198, "kind": "run_end", "run_id": "glm-5.3__t1-eligibility__r1", "model": "glm-5.3", "task": "t1-eligibility", "rep": 1, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.801837, "wall_s": 564.37}
+{"t": 1794651861.198, "kind": "run_start", "run_id": "glm-5.3__t2-privacy__r1", "model": "glm-5.3", "task": "t2-privacy", "rep": 1}
+{"t": 1794651974.754, "kind": "run_end", "run_id": "claude-fable-5-2__t5-safety__r1", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 1, "passed": true, "stop": "finish", "calls": 5, "usd": 1.219848, "wall_s": 176.53}
+{"t": 1794651974.754, "kind": "run_start", "run_id": "claude-fable-5-2__t6-governance__r1", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 1}
+{"t": 1794651989.804, "kind": "run_end", "run_id": "claude-fable-5-2__t5-safety__r2", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 2, "passed": true, "stop": "finish", "calls": 6, "usd": 1.319576, "wall_s": 158.39}
+{"t": 1794651989.804, "kind": "run_start", "run_id": "claude-fable-5-2__t6-governance__r2", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 2}
+{"t": 1794652040.644, "kind": "run_end", "run_id": "glm-5.3__t2-privacy__r2", "model": "glm-5.3", "task": "t2-privacy", "rep": 2, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.588696, "wall_s": 568.74}
+{"t": 1794652040.644, "kind": "run_start", "run_id": "glm-5.3__t3-audit__r2", "model": "glm-5.3", "task": "t3-audit", "rep": 2}
+{"t": 1794652046.371, "kind": "run_end", "run_id": "claude-fable-5-2__t4-scheduling__r3", "model": "claude-fable-5-2", "task": "t4-scheduling", "rep": 3, "passed": true, "stop": "finish", "calls": 8, "usd": 2.108288, "wall_s": 278.76}
+{"t": 1794652046.371, "kind": "run_start", "run_id": "claude-fable-5-2__t5-safety__r3", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 3}
+{"t": 1794652126.28, "kind": "run_end", "run_id": "claude-fable-5-2__t6-governance__r2", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 2, "passed": true, "stop": "finish", "calls": 5, "usd": 1.03944, "wall_s": 136.12}
+{"t": 1794652133.576, "kind": "run_end", "run_id": "claude-fable-5-2__t6-governance__r1", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 1, "passed": true, "stop": "finish", "calls": 5, "usd": 1.145968, "wall_s": 158.48}
+{"t": 1794652205.086, "kind": "run_end", "run_id": "glm-5.3__t3-audit__r2", "model": "glm-5.3", "task": "t3-audit", "rep": 2, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.289503, "wall_s": 164.42}
+{"t": 1794652205.086, "kind": "run_start", "run_id": "glm-5.3__t4-scheduling__r2", "model": "glm-5.3", "task": "t4-scheduling", "rep": 2}
+{"t": 1794652226.219, "kind": "run_end", "run_id": "claude-fable-5-2__t5-safety__r3", "model": "claude-fable-5-2", "task": "t5-safety", "rep": 3, "passed": true, "stop": "finish", "calls": 5, "usd": 1.187904, "wall_s": 179.5}
+{"t": 1794652226.219, "kind": "run_start", "run_id": "claude-fable-5-2__t6-governance__r3", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 3}
+{"t": 1794652388.644, "kind": "run_end", "run_id": "claude-fable-5-2__t6-governance__r3", "model": "claude-fable-5-2", "task": "t6-governance", "rep": 3, "passed": true, "stop": "finish", "calls": 5, "usd": 1.144464, "wall_s": 162.05}
+{"t": 1794652722.132, "kind": "run_end", "run_id": "glm-5.3__t2-privacy__r1", "model": "glm-5.3", "task": "t2-privacy", "rep": 1, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.495298, "wall_s": 860.55}
+{"t": 1794652722.132, "kind": "run_start", "run_id": "glm-5.3__t3-audit__r1", "model": "glm-5.3", "task": "t3-audit", "rep": 1}
+{"t": 1794652840.96, "kind": "run_end", "run_id": "glm-5.3__t3-audit__r1", "model": "glm-5.3", "task": "t3-audit", "rep": 1, "passed": true, "stop": "finish", "calls": 20, "usd": 0.200144, "wall_s": 118.48}
+{"t": 1794652840.96, "kind": "run_start", "run_id": "glm-5.3__t4-scheduling__r1", "model": "glm-5.3", "task": "t4-scheduling", "rep": 1}
+{"t": 1794652902.639, "kind": "run_end", "run_id": "glm-5.3__t2-privacy__r3", "model": "glm-5.3", "task": "t2-privacy", "rep": 3, "passed": false, "stop": "wall_clock", "calls": 12, "usd": 0.562284, "wall_s": 1270.2}
+{"t": 1794652902.639, "kind": "run_start", "run_id": "glm-5.3__t3-audit__r3", "model": "glm-5.3", "task": "t3-audit", "rep": 3}
+{"t": 1794653069.697, "kind": "run_end", "run_id": "glm-5.3__t3-audit__r3", "model": "glm-5.3", "task": "t3-audit", "rep": 3, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.354582, "wall_s": 166.64}
+{"t": 1794653069.697, "kind": "run_start", "run_id": "glm-5.3__t4-scheduling__r3", "model": "glm-5.3", "task": "t4-scheduling", "rep": 3}
+{"t": 1794653212.618, "kind": "run_end", "run_id": "glm-5.3__t4-scheduling__r2", "model": "glm-5.3", "task": "t4-scheduling", "rep": 2, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.72291, "wall_s": 1007.5}
+{"t": 1794653212.618, "kind": "run_start", "run_id": "glm-5.3__t5-safety__r2", "model": "glm-5.3", "task": "t5-safety", "rep": 2}
+{"t": 1794653414.306, "kind": "run_end", "run_id": "glm-5.3__t4-scheduling__r1", "model": "glm-5.3", "task": "t4-scheduling", "rep": 1, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.482337, "wall_s": 572.97}
+{"t": 1794653414.306, "kind": "run_start", "run_id": "glm-5.3__t5-safety__r1", "model": "glm-5.3", "task": "t5-safety", "rep": 1}
+{"t": 1794653953.003, "kind": "run_end", "run_id": "glm-5.3__t5-safety__r2", "model": "glm-5.3", "task": "t5-safety", "rep": 2, "passed": true, "stop": "max_calls", "calls": 30, "usd": 0.548283, "wall_s": 740.08}
+{"t": 1794653953.003, "kind": "run_start", "run_id": "glm-5.3__t6-governance__r2", "model": "glm-5.3", "task": "t6-governance", "rep": 2}
+{"t": 1794654168.358, "kind": "run_end", "run_id": "glm-5.3__t5-safety__r1", "model": "glm-5.3", "task": "t5-safety", "rep": 1, "passed": true, "stop": "no_tool_calls", "calls": 12, "usd": 0.662849, "wall_s": 753.44}
+{"t": 1794654168.358, "kind": "run_start", "run_id": "glm-5.3__t6-governance__r1", "model": "glm-5.3", "task": "t6-governance", "rep": 1}
+{"t": 1794654238.437, "kind": "run_end", "run_id": "glm-5.3__t4-scheduling__r3", "model": "glm-5.3", "task": "t4-scheduling", "rep": 3, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.845325, "wall_s": 1168.32}
+{"t": 1794654238.437, "kind": "run_start", "run_id": "glm-5.3__t5-safety__r3", "model": "glm-5.3", "task": "t5-safety", "rep": 3}
+{"t": 1794654513.494, "kind": "run_end", "run_id": "glm-5.3__t6-governance__r1", "model": "glm-5.3", "task": "t6-governance", "rep": 1, "passed": true, "stop": "finish", "calls": 25, "usd": 0.38227, "wall_s": 344.81}
+{"t": 1794654577.755, "kind": "run_end", "run_id": "glm-5.3__t6-governance__r2", "model": "glm-5.3", "task": "t6-governance", "rep": 2, "passed": true, "stop": "finish", "calls": 27, "usd": 0.712714, "wall_s": 624.4}
+{"t": 1794655043.936, "kind": "run_end", "run_id": "glm-5.3__t5-safety__r3", "model": "glm-5.3", "task": "t5-safety", "rep": 3, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.776706, "wall_s": 805.48}
+{"t": 1794655043.936, "kind": "run_start", "run_id": "glm-5.3__t6-governance__r3", "model": "glm-5.3", "task": "t6-governance", "rep": 3}
+{"t": 1794655370.519, "kind": "run_end", "run_id": "glm-5.3__t6-governance__r3", "model": "glm-5.3", "task": "t6-governance", "rep": 3, "passed": false, "stop": "max_calls", "calls": 30, "usd": 0.429791, "wall_s": 326.56}

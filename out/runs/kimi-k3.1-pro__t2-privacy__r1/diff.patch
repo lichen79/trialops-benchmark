@@ -1,0 +1,213 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_governance.py b/tests/test_governance.py
+--- a/tests/test_governance.py	2026-11-13 14:57:35
++++ b/tests/test_governance.py	2026-11-13 20:27:52
+@@ -4,6 +4,7 @@
+ import pytest
+ 
+ from trialops.governance import apply_reuse_action
++from trialops.privacy import execute_reuse_export
+ 
+ 
+ NOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+@@ -179,3 +180,138 @@
+         apply_reuse_action(request("approved"), "submit", "alice", NOW)
+     with pytest.raises(ValueError, match="INVALID_NOW"):
+         apply_reuse_action(request(), "submit", "alice", datetime(2025, 1, 1))
++
++
++def reusable_export_subject(subject_id="private-subject", **changes):
++    value = {
++        "id": subject_id,
++        "name": "Private Fictional Name",
++        "birth_date": "1990-04-03",
++        "email": "private@example.test",
++        "country": "NZ",
++        "visits": ["2025-01-02", "2025-01-01"],
++        "consents": [
++            {
++                "purpose": "synthetic methods research",
++                "signed_on": "2025-01-01",
++            }
++        ],
++        "purge_after": "2025-01-01",
++    }
++    value.update(changes)
++    return value
++
++
++class OneShotSubjects:
++    def __init__(self, values):
++        self.values = values
++        self.calls = 0
++
++    def __iter__(self):
++        self.calls += 1
++        if self.calls > 1:
++            raise AssertionError("subjects were consumed more than once")
++        yield from self.values
++
++
++def assert_no_export_secrets(value):
++    serialized = repr(value)
++    for sensitive in (
++        "integration-secret",
++        "private-subject",
++        "Private Fictional Name",
++        "private@example.test",
++        "1990-04-03",
++    ):
++        assert sensitive not in serialized
++
++
++def test_execute_reuse_export_end_to_end_uses_approved_utc_snapshot():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    original = deepcopy(approved)
++    subjects = OneShotSubjects([reusable_export_subject()])
++    # This instant is still January 1 in UTC, although it is January 2 locally.
++    at = datetime(2025, 1, 2, 1, 30, tzinfo=timezone(timedelta(hours=2)))
++
++    executed = execute_reuse_export(
++        approved,
++        subjects,
++        actor="alice",
++        secret="integration-secret",
++        now=at,
++    )
++
++    assert subjects.calls == 1
++    assert approved == original
++    assert executed["status"] == "executed"
++    assert executed["history"][-1] == {
++        "action": "execute",
++        "actor": "alice",
++        "at": "2025-01-01T23:30:00Z",
++    }
++    export = executed["execution_result"]
++    assert export["manifest"]["count"] == 1
++    assert export["rows"][0]["visits"] == ["2025-01-01", "2025-01-02"]
++    assert set(export["rows"][0]) == {
++        "pseudonym",
++        "country",
++        "birth_year",
++        "visits",
++    }
++    assert_no_export_secrets(executed)
++
++
++def test_execute_reuse_export_governance_failures_do_not_consume_subjects():
++    subjects = OneShotSubjects([reusable_export_subject()])
++
++    with pytest.raises(PermissionError, match="REQUESTER_REQUIRED"):
++        execute_reuse_export(
++            request("approved", approval_expires_on="2025-02-01"),
++            subjects,
++            actor="bob",
++            secret="integration-secret",
++            now=NOW,
++        )
++    assert subjects.calls == 0
++
++    approved = request("approved", approval_expires_on="2025-02-01")
++    executed = execute_reuse_export(
++        approved,
++        subjects,
++        actor="alice",
++        secret="integration-secret",
++        now=NOW,
++    )
++    assert subjects.calls == 1
++    with pytest.raises(ValueError, match="INVALID_STATE"):
++        execute_reuse_export(
++            executed,
++            subjects,
++            actor="alice",
++            secret="integration-secret",
++            now=NOW,
++        )
++    assert subjects.calls == 1
++
++
++def test_execute_reuse_export_failure_rolls_back_and_has_safe_top_level_error():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    original = deepcopy(approved)
++    subjects = OneShotSubjects(
++        [reusable_export_subject(birth_date="private-subject-invalid-date")]
++    )
++
++    with pytest.raises(ValueError) as caught:
++        execute_reuse_export(
++            approved,
++            subjects,
++            actor="alice",
++            secret="integration-secret",
++            now=NOW,
++        )
++
++    assert str(caught.value) == "EXECUTION_FAILED"
++    assert subjects.calls == 1
++    assert approved == original
++    assert_no_export_secrets(str(caught.value))
++    assert_no_export_secrets(approved)
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_privacy.py b/tests/test_privacy.py
+--- a/tests/test_privacy.py	2026-11-13 14:56:26
++++ b/tests/test_privacy.py	2026-11-13 20:28:32
+@@ -70,6 +70,9 @@
+         "sha256": hashlib.sha256(canonical(expected_rows).encode("utf-8")).hexdigest(),
+     }
+     assert subjects == original
++    assert export_subjects(
++        reversed(subjects), purpose="research", secret="test-secret", on=ON
++    ) == result
+ 
+ 
+ def test_withdrawal_on_on_is_inactive_but_later_withdrawal_is_active():
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/privacy.py b/trialops/privacy.py
+--- a/trialops/privacy.py	2026-11-13 20:17:29
++++ b/trialops/privacy.py	2026-11-13 20:28:14
+@@ -1,14 +1,16 @@
+ """Purpose-scoped, pseudonymized exports of fictional subject records."""
+ 
+ from collections.abc import Iterable, Mapping
+-from datetime import date, datetime
++from datetime import date, datetime, timezone
+ from typing import Any
+ import hashlib
+ import hmac
+ import json
+ import re
+ 
++from trialops.governance import apply_reuse_action
+ 
++
+ _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
+ 
+ 
+@@ -141,4 +143,28 @@
+         },
+     }
+ 
++
++def execute_reuse_export(
++    request: dict[str, Any],
++    subjects: Iterable[Mapping[str, Any]],
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, Any]:
++    """Execute an approved reuse request with its purpose-scoped export."""
++
++    def executor(approved: Mapping[str, Any]) -> dict[str, Any]:
++        purpose = approved.get("purpose")
++        if not isinstance(purpose, str):
++            # Governance normally rejects this first; keep failures generic if
++            # the integration is ever supplied a different implementation.
++            raise ValueError("INVALID_PURPOSE")
++        # apply_reuse_action validates now before invoking this callback.
++        on = now.astimezone(timezone.utc).date()
++        return export_subjects(subjects, purpose=purpose, secret=secret, on=on)
++
++    return apply_reuse_action(
++        request, "execute", actor, now, executor=executor
++    )
+ 

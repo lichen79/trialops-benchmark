@@ -1,0 +1,224 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_scheduling.py b/tests/test_scheduling.py
+--- a/tests/test_scheduling.py	2026-11-13 14:58:30
++++ b/tests/test_scheduling.py	2026-11-13 20:29:36
+@@ -2,9 +2,43 @@
+ 
+ import pytest
+ 
+-from trialops.scheduling import plan_visits
++from trialops.scheduling import book_subject_visits, plan_visits
+ 
+ 
++def make_protocol():
++    return {
++        "min_age": 18,
++        "max_age": 30,
++        "required_consent_version": "v2",
++        "consent_valid_from": "2024-01-01",
++        "labs": {},
++        "exclusions": [],
++    }
++
++
++def make_subject():
++    return {
++        "birth_date": "2000-06-15",
++        "consents": [{"version": "v2", "signed_on": "2024-01-01"}],
++        "labs": {},
++        "flags": [],
++    }
++
++
++def book(capacity, **overrides):
++    arguments = {
++        "on": date(2024, 6, 15),
++        "first_day": date(2024, 1, 31),
++        "offsets_months": [0, 1],
++        "hour": 9,
++        "minute": 0,
++        "timezone": "America/New_York",
++        "capacity": capacity,
++    }
++    arguments.update(overrides)
++    return book_subject_visits(make_subject(), make_protocol(), **arguments)
++
++
+ def test_month_end_targets_use_the_original_day_and_leap_year():
+     visits = plan_visits(
+         first_day=date(2024, 1, 31),
+@@ -133,3 +167,117 @@
+             capacity=capacity,
+         )
+     assert capacity == {date(2024, 1, 1): 1}
++
++
++def test_booking_commits_only_listed_dates_and_sequential_calls_contend():
++    january_31 = date(2024, 1, 31)
++    february_29 = date(2024, 2, 29)
++    capacity = {january_31: 1, february_29: 1}
++
++    first = book(capacity)
++    assert [visit["local"][:10] for visit in first] == [
++        "2024-01-31",
++        "2024-02-29",
++    ]
++    assert capacity == {january_31: 0, february_29: 0}
++
++    second = book(capacity)
++    assert [visit["local"][:10] for visit in second] == [
++        "2024-02-01",
++        "2024-03-01",
++    ]
++    # The second call moved to unlisted days, which are not inserted.
++    assert capacity == {january_31: 0, february_29: 0}
++
++
++def test_booking_rolls_back_all_reservations_when_a_later_visit_fails():
++    january_31 = date(2024, 1, 31)
++    february_29 = date(2024, 2, 29)
++    closed = {february_29 + timedelta(days=days) for days in range(367)}
++    original_closed = closed.copy()
++    capacity = {january_31: 1, february_29: 1}
++    original_capacity = capacity.copy()
++    subject = make_subject()
++    protocol = make_protocol()
++
++    with pytest.raises(ValueError, match="UNSCHEDULABLE"):
++        book_subject_visits(
++            subject,
++            protocol,
++            on=date(2024, 6, 15),
++            first_day=january_31,
++            offsets_months=[0, 1],
++            hour=9,
++            minute=0,
++            timezone="America/New_York",
++            capacity=capacity,
++            closed_days=closed,
++        )
++
++    assert capacity == original_capacity
++    assert closed == original_closed
++
++
++def test_ineligible_booking_preserves_capacity_and_inputs():
++    capacity = {date(2024, 1, 31): 1}
++    original_capacity = capacity.copy()
++    subject = make_subject()
++    subject.update(
++        birth_date="1970-01-01",
++        consents=[{"version": "v1", "signed_on": "2023-01-01"}],
++        flags=["DO_NOT_ENROLL"],
++    )
++    protocol = make_protocol()
++    protocol["exclusions"] = ["DO_NOT_ENROLL"]
++    original_subject = repr(subject)
++    original_protocol = repr(protocol)
++
++    with pytest.raises(ValueError) as error:
++        book_subject_visits(
++            subject,
++            protocol,
++            on=date(2024, 6, 15),
++            first_day=date(2024, 1, 31),
++            offsets_months=[0],
++            hour=9,
++            minute=0,
++            timezone="Not/A_Real_Zone",
++            capacity=capacity,
++        )
++
++    message = str(error.value)
++    assert message.startswith("INELIGIBLE:")
++    reasons = message.removeprefix("INELIGIBLE: ").split(", ")
++    assert reasons == [
++        "CONSENT_MISSING",
++        "CONSENT_VERSION",
++        "AGE_ABOVE_MAX",
++        "EXCLUSION_DO_NOT_ENROLL",
++    ]
++    assert capacity == original_capacity
++    assert repr(subject) == original_subject
++    assert repr(protocol) == original_protocol
++
++
++def test_booking_preserves_month_end_and_dst_behavior():
++    capacity = {date(2024, 1, 31): 1, date(2024, 2, 29): 1}
++    visits = book(capacity, offsets_months=[0, 1, 2])
++
++    assert [visit["local"] for visit in visits] == [
++        "2024-01-31T09:00:00-05:00",
++        "2024-02-29T09:00:00-05:00",
++        "2024-03-31T09:00:00-04:00",
++    ]
++    assert list(capacity.values()) == [0, 0]
++
++    dst_capacity = {date(2024, 3, 10): 1}
++    [visit] = book(
++        dst_capacity,
++        first_day=date(2024, 3, 10),
++        offsets_months=[0],
++        hour=2,
++        minute=30,
++    )
++    assert visit["local"] == "2024-03-10T03:30:00-04:00"
++    assert visit["utc"] == "2024-03-10T07:30:00Z"
++    assert dst_capacity == {date(2024, 3, 10): 0}
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/scheduling.py b/trialops/scheduling.py
+--- a/trialops/scheduling.py	2026-11-13 20:17:29
++++ b/trialops/scheduling.py	2026-11-13 20:29:46
+@@ -7,6 +7,8 @@
+ from datetime import date, datetime, timedelta, timezone as datetime_timezone
+ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+ 
++from trialops.eligibility import evaluate_subject
++
+ _ONE_DAY = timedelta(days=1)
+ _ZERO_DELTA = timedelta(0)
+ 
+@@ -146,4 +148,45 @@
+ 
+     return visits
+ 
++
++def book_subject_visits(
++    subject: Mapping[str, object],
++    protocol: Mapping[str, object],
++    *,
++    on: date,
++    first_day: date,
++    offsets_months: Iterable[int],
++    hour: int,
++    minute: int,
++    timezone: str,
++    capacity: dict[date, int],
++    closed_days: Iterable[date] | None = None,
++) -> list[dict[str, object]]:
++    """Plan eligible visits, then atomically commit persistent capacity use."""
++    if not isinstance(capacity, dict):
++        raise TypeError("capacity must be a dict of dates to slots")
++
++    eligibility = evaluate_subject(subject, protocol, on)
++    if not eligibility["eligible"]:
++        reasons = eligibility["reasons"]
++        raise ValueError(f"INELIGIBLE: {', '.join(reasons)}")
++
++    visits = plan_visits(
++        first_day=first_day,
++        offsets_months=offsets_months,
++        hour=hour,
++        minute=minute,
++        timezone=timezone,
++        closed_days=closed_days,
++        capacity=capacity,
++    )
++
++    # Every returned ISO local timestamp starts with its calendar date. Only
++    # caller-listed dates are charged; unlisted dates stay unconstrained.
++    for visit in visits:
++        visit_day = date.fromisoformat(str(visit["local"])[:10])
++        if visit_day in capacity:
++            capacity[visit_day] -= 1
++
++    return visits
+ 

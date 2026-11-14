@@ -1,0 +1,478 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_privacy.py b/tests/test_privacy.py
+--- a/tests/test_privacy.py	2026-11-13 14:56:26
++++ b/tests/test_privacy.py	2026-11-14 11:27:20
+@@ -1,12 +1,14 @@
+ from copy import deepcopy
+-from datetime import date
++from datetime import date, datetime
+ import hashlib
+ import hmac
+ import json
++import re
+ 
+ import pytest
+ 
+-from trialops.privacy import export_subjects
++from trialops.governance import apply_reuse_action
++from trialops.privacy import export_subjects, execute_reuse_export
+ 
+ 
+ ON = date(2024, 6, 15)
+@@ -158,3 +160,402 @@
+             )
+         assert "id" in str(caught.value)
+         assert invalid_id not in str(caught.value)
++
++
++def test_consent_signature_boundary_is_inclusive_and_purpose_scoped():
++    """``signed_on == on`` is active; ``signed_on > on`` is not."""
++    on_day = make_subject(
++        "on-day", consents=[{"purpose": "research", "signed_on": "2024-06-15"}]
++    )
++    after = make_subject(
++        "after", consents=[{"purpose": "research", "signed_on": "2024-06-16"}]
++    )
++    other_purpose = make_subject(
++        "other-purpose", consents=[{"purpose": "other", "signed_on": "2024-01-01"}]
++    )
++
++    result = export_subjects(
++        [on_day, after, other_purpose],
++        purpose="research",
++        secret="test-secret",
++        on=ON,
++    )
++
++    assert [row["pseudonym"] for row in result["rows"]] == [pseudonym("on-day")]
++    assert result["manifest"]["count"] == 1
++
++
++def test_purge_boundary_is_inclusive_and_concurrent_consents_are_considered():
++    """``purge_after == on`` is retained; earlier purge dates are dropped."""
++    on_day = make_subject("retained", purge_after="2024-06-15")
++    purged = make_subject("purged", purge_after="2024-06-14")
++    later = make_subject("later", purge_after="2024-12-31")
++    # One retired consent plus one still-active consent for the same purpose.
++    multi = make_subject(
++        "multi",
++        consents=[
++            {
++                "purpose": "research",
++                "signed_on": "2024-01-01",
++                "withdrawn_on": "2024-02-01",
++            },
++            {"purpose": "research", "signed_on": "2024-03-01"},
++        ],
++    )
++    # Only a consent withdrawn exactly on ``on`` exists for the purpose.
++    only_withdrawn = make_subject(
++        "only-withdrawn",
++        consents=[
++            {
++                "purpose": "research",
++                "signed_on": "2024-01-01",
++                "withdrawn_on": "2024-06-15",
++            }
++        ],
++    )
++
++    result = export_subjects(
++        [on_day, purged, later, multi, only_withdrawn],
++        purpose="research",
++        secret="test-secret",
++        on=ON,
++    )
++
++    assert [row["pseudonym"] for row in result["rows"]] == sorted(
++        [pseudonym("retained"), pseudonym("later"), pseudonym("multi")]
++    )
++    assert result["manifest"]["count"] == 3
++
++
++def test_purpose_and_secret_scope_the_pseudonym_domain():
++    dual = make_subject(
++        "subject-one",
++        consents=[
++            {"purpose": "research", "signed_on": "2024-01-01"},
++            {"purpose": "other", "signed_on": "2024-01-01"},
++        ],
++    )
++    left = export_subjects(
++        [dual], purpose="research", secret="test-secret", on=ON
++    )
++    right = export_subjects([dual], purpose="other", secret="test-secret", on=ON)
++    other_secret = export_subjects(
++        [dual], purpose="research", secret="another-secret", on=ON
++    )
++
++    assert left["rows"][0]["pseudonym"] == pseudonym("subject-one")
++    assert right["rows"][0]["pseudonym"] == pseudonym("subject-one", purpose="other")
++    assert other_secret["rows"][0]["pseudonym"] == pseudonym(
++        "subject-one", secret="another-secret"
++    )
++    assert len({pseudonym("subject-one"), pseudonym("subject-one", purpose="other")}) == 2
++    assert len({pseudonym("subject-one"), pseudonym("subject-one", secret="another-secret")}) == 2
++    # Only the pseudonym changes; the retained fields stay identical.
++    for row in (right["rows"][0], other_secret["rows"][0]):
++        assert {key: row[key] for key in ("country", "birth_year", "visits")} == {
++            "country": "NZ",
++            "birth_year": 1990,
++            "visits": ["2024-01-02", "2024-05-01"],
++        }
++
++
++def test_output_is_deterministic_for_permuted_input_and_identical_calls():
++    unordered = [
++        make_subject("c-subject", visits=["2024-02-02", "2024-01-01", "2024-03-03"]),
++        make_subject("a-subject", visits=["2024-05-05", "2024-04-04"]),
++        make_subject("b-subject", visits=[]),
++    ]
++    other_order = [unordered[2], unordered[0], unordered[1]]
++
++    first = export_subjects(unordered, purpose="research", secret="test-secret", on=ON)
++    second = export_subjects(other_order, purpose="research", secret="test-secret", on=ON)
++    third = export_subjects(unordered, purpose="research", secret="test-secret", on=ON)
++
++    assert first == second == third
++    assert [row["pseudonym"] for row in first["rows"]] == [
++        pseudonym("a-subject"),
++        pseudonym("b-subject"),
++        pseudonym("c-subject"),
++    ]
++    assert first["rows"][0]["visits"] == ["2024-04-04", "2024-05-05"]
++    assert first["rows"][2]["visits"] == ["2024-01-01", "2024-02-02", "2024-03-03"]
++
++
++def test_manifest_digest_uses_the_specified_canonical_form():
++    # A non-ASCII value keeps the two escaping modes distinguishable.
++    subject = make_subject(
++        "canonical-check", country="Ω-land", visits=["2024-01-01", "2023-12-31"]
++    )
++    result = export_subjects([subject], purpose="research", secret="test-secret", on=ON)
++    expected_rows = [
++        {
++            "pseudonym": pseudonym("canonical-check"),
++            "country": "Ω-land",
++            "birth_year": 1990,
++            "visits": ["2023-12-31", "2024-01-01"],
++        }
++    ]
++
++    exact = hashlib.sha256(
++        json.dumps(
++            expected_rows,
++            sort_keys=True,
++            separators=(",", ":"),
++            ensure_ascii=False,
++        ).encode("utf-8")
++    ).hexdigest()
++    spaced = hashlib.sha256(
++        json.dumps(expected_rows, sort_keys=True).encode("utf-8")
++    ).hexdigest()
++    ascii_escaped = hashlib.sha256(
++        json.dumps(
++            expected_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True
++        ).encode("utf-8")
++    ).hexdigest()
++    unsorted_keys = hashlib.sha256(
++        json.dumps(
++            [dict(reversed(list(expected_rows[0].items())))],
++            separators=(",", ":"),
++            ensure_ascii=False,
++        ).encode("utf-8")
++    ).hexdigest()
++
++    assert result["manifest"] == {"algorithm": "sha256", "count": 1, "sha256": exact}
++    # The digest is the canonical compact, key-sorted, unescaped form.
++    assert result["manifest"]["sha256"] != spaced
++    assert result["manifest"]["sha256"] != ascii_escaped
++    assert result["manifest"]["sha256"] != unsorted_keys
++
++
++def test_unicode_country_keeps_its_value_and_unescaped_digest():
++    subject = make_subject("unicode-check", country="Ω-land", visits=["2024-01-01"])
++    result = export_subjects([subject], purpose="research", secret="test-secret", on=ON)
++
++    expected_rows = [
++        {
++            "pseudonym": pseudonym("unicode-check"),
++            "country": "Ω-land",
++            "birth_year": 1990,
++            "visits": ["2024-01-01"],
++        }
++    ]
++    expected = hashlib.sha256(canonical(expected_rows).encode("utf-8")).hexdigest()
++
++    assert result["rows"][0]["country"] == "Ω-land"
++    assert result["manifest"]["sha256"] == expected
++
++
++def test_invalid_dates_raise_identifier_free_errors_for_every_field():
++    with pytest.raises(ValueError) as caught:
++        export_subjects(
++            [make_subject("bad-visits", visits=["2024-01-01", "not-a-date"])],
++            purpose="research",
++            secret="test-secret",
++            on=ON,
++        )
++    assert "visits" in str(caught.value)
++    assert "not-a-date" not in str(caught.value)
++
++    for field in ("birth_date", "purge_after"):
++        with pytest.raises(ValueError) as caught:
++            export_subjects(
++                [make_subject("bad-" + field, **{field: "person@example.test"})],
++                purpose="research",
++                secret="test-secret",
++                on=ON,
++            )
++        assert field in str(caught.value)
++        assert "person@example.test" not in str(caught.value)
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects(
++            [
++                make_subject(
++                    "bad-consent",
++                    consents=[{"purpose": "research", "signed_on": "junk"}],
++                )
++            ],
++            purpose="research",
++            secret="test-secret",
++            on=ON,
++        )
++    assert "signed_on" in str(caught.value)
++    assert "junk" not in str(caught.value)
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects(
++            [
++                make_subject(
++                    "bad-withdrawal",
++                    consents=[
++                        {
++                            "purpose": "research",
++                            "signed_on": "2024-01-01",
++                            "withdrawn_on": "not-a-date",
++                        }
++                    ],
++                )
++            ],
++            purpose="research",
++            secret="test-secret",
++            on=ON,
++        )
++    assert "withdrawn_on" in str(caught.value)
++
++
++@pytest.mark.parametrize(
++    ("bad_subjects", "expected_fragment"),
++    [
++        ("not-iterable", "subjects"),
++        (5, "subjects"),
++        ({"id": "mapping"}, "subjects"),
++        ([42], "subject"),
++    ],
++)
++def test_invalid_subject_containers_are_rejected(bad_subjects, expected_fragment):
++    with pytest.raises(ValueError) as caught:
++        export_subjects(bad_subjects, purpose="research", secret="test-secret", on=ON)
++    assert expected_fragment in str(caught.value)
++    assert "test-secret" not in str(caught.value)
++
++
++@pytest.mark.parametrize("bad_on", ["2024-06-15", None, datetime(2024, 6, 15)])
++def test_on_must_be_a_plain_date(bad_on):
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose="research", secret="test-secret", on=bad_on)
++    assert "on" in str(caught.value)
++
++
++def test_empty_purpose_or_secret_is_rejected_without_echoing_the_secret():
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose="", secret="test-secret", on=ON)
++    assert str(caught.value) == "purpose must be a non-empty string"
++    assert "test-secret" not in str(caught.value)
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose="research", secret="", on=ON)
++    assert str(caught.value) == "secret must be a non-empty string"
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose=None, secret="test-secret", on=ON)
++    assert "purpose" in str(caught.value)
++    assert "test-secret" not in str(caught.value)
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose="research", secret=42, on=ON)
++    assert "secret" in str(caught.value)
++
++
++def test_generator_input_and_visits_allowlist():
++    """A generator is a valid iterable; visits must be a list (allowlist only)."""
++
++    def generate():
++        yield make_subject("gen-a")
++        yield make_subject("gen-b")
++
++    result = export_subjects(generate(), purpose="research", secret="test-secret", on=ON)
++    assert result["manifest"]["count"] == 2
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects(
++            [make_subject("tuple-visits", visits=("2024-01-01",))],
++            purpose="research",
++            secret="test-secret",
++            on=ON,
++        )
++    assert "visits" in str(caught.value)
++
++
++def test_direct_identifiers_are_absent_from_every_row_and_error_value():
++    subjects = [
++        make_subject("leak-check-1", name="Unusual Name", email="leak1@example.test"),
++        make_subject("leak-check-2", name="Another Person", email="leak2@example.test"),
++    ]
++    result = export_subjects(subjects, purpose="research", secret="s3cret-value", on=ON)
++
++    serialized = canonical(result)
++    assert "s3cret-value" not in serialized
++    for subject in subjects:
++        for key in ("id", "name", "email", "birth_date", "purge_after"):
++            assert subject[key] not in serialized
++        assert canonical(subject["consents"]) not in serialized
++        for consent in subject["consents"]:
++            assert consent["purpose"] not in serialized or consent["purpose"] == "research"
++            assert consent["signed_on"] not in serialized
++    assert all(
++        set(row) == {"pseudonym", "country", "birth_year", "visits"}
++        for row in result["rows"]
++    )
++    assert all(re.fullmatch(r"[0-9a-f]{16}", row["pseudonym"]) for row in result["rows"])
++
++    with pytest.raises(ValueError) as caught:
++        export_subjects(
++            [make_subject("leak-check-1"), make_subject("leak-check-1")],
++            purpose="research",
++            secret="s3cret-value",
++            on=ON,
++        )
++    message = str(caught.value)
++    for identifier in (
++        "leak-check-1",
++        "Unusual Name",
++        "leak1@example.test",
++        "person@example.test",
++        "1990-04-03",
++        "s3cret-value",
++    ):
++        assert identifier not in message
++
++
++def test_missing_required_fields_are_reported_by_name_only():
++    fields = (
++        "id",
++        "name",
++        "birth_date",
++        "email",
++        "country",
++        "visits",
++        "consents",
++        "purge_after",
++    )
++    for field in fields:
++        subject = make_subject("missing-" + field.replace("_", "-"))
++        del subject[field]
++        with pytest.raises(ValueError) as caught:
++            export_subjects([subject], purpose="research", secret="test-secret", on=ON)
++        message = str(caught.value)
++        assert field in message
++        for identifier in ("test-secret", "person@example.test", "Fictional Person"):
++            assert identifier not in message
++
++
++def test_duplicate_ids_are_rejected_across_three_records():
++    subjects = [
++        make_subject("dup-subject", name="First Person"),
++        make_subject("dup-subject", name="Second Person", email="other@example.test"),
++        make_subject("dup-subject"),
++    ]
++    with pytest.raises(ValueError) as caught:
++        export_subjects(subjects, purpose="research", secret="test-secret", on=ON)
++
++    message = str(caught.value)
++    assert message == "DUPLICATE_SUBJECT_ID"
++    for identifier in (
++        "dup-subject",
++        "First Person",
++        "Second Person",
++        "other@example.test",
++        "test-secret",
++    ):
++        assert identifier not in message
++
++
++def test_export_does_not_mutate_nested_input_structures():
++    subjects = [make_subject("nested-a"), make_subject("nested-b")]
++    original = deepcopy(subjects)
++    consumed = list(subjects)
++
++    export_subjects(consumed, purpose="research", secret="test-secret", on=ON)
++
++    assert subjects == original
++    assert consumed == original
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/privacy.py b/trialops/privacy.py
+--- a/trialops/privacy.py	2026-11-13 20:17:29
++++ b/trialops/privacy.py	2026-11-14 11:24:41
+@@ -8,7 +8,9 @@
+ import json
+ import re
+ 
++from trialops.governance import _aware_utc, apply_reuse_action
+ 
++
+ _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
+ 
+ 
+@@ -141,4 +143,41 @@
+         },
+     }
+ 
++
++def execute_reuse_export(
++    request: dict[str, object],
++    subjects: Iterable[Mapping[str, Any]],
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, object]:
++    """Execute one approved reuse request as a pseudonymized export.
++
++    The single delegation to :func:`trialops.governance.apply_reuse_action`
++    performs every governance check (actor, state, approval and retention
++    windows, privacy plan, metadata) before it invokes the executor, so an
++    unexecutable request never consumes the supplied subject records. The
++    executor runs :func:`export_subjects` exactly once, using the purpose of
++    the approved snapshot it receives, the caller's secret, and the UTC date
++    of ``now``. Any export failure is reported by governance as
++    ``EXECUTION_FAILED`` and leaves the approved request and its history
++    unchanged, because ``apply_reuse_action`` works on a deep copy.
++    """
++
++    def executor(approved_request: Mapping[str, Any]) -> dict[str, Any]:
++        # ``approved_request`` is governance's private deep copy of the
++        # approved snapshot; its purpose is the scope of this export.
++        purpose = approved_request.get("purpose")
++        # Reuse governance's own normalization so the exported "on" date is
++        # exactly the UTC date every governance check was evaluated against.
++        on = _aware_utc(now).date()
++        return export_subjects(
++            subjects,
++            purpose=purpose,  # type: ignore[arg-type]
++            secret=secret,
++            on=on,
++        )
++
++    return apply_reuse_action(request, "execute", actor, now, executor=executor)
+ 

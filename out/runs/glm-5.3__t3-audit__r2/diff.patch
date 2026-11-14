@@ -1,0 +1,352 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_audit.py b/tests/test_audit.py
+--- a/tests/test_audit.py	2026-11-13 14:56:35
++++ b/tests/test_audit.py	2026-11-13 20:36:15
+@@ -156,3 +156,281 @@
+     )
+ 
+     assert record["hash"] == "92d5600f044f4bcd2134215e770f49cac60926e50670c3f58930eba13db528ba"
++
++
++def test_from_records_restore_and_continue():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++    append_event(original, "event-2", AT + timedelta(seconds=1))
++    snapshot = deepcopy(original.records)
++
++    restored = AuditChain.from_records(
++        snapshot, expected_head=original.head(), expected_length=2
++    )
++
++    assert restored.records == snapshot
++    assert restored.head() == original.head()
++    assert restored.previous_hash == original.head()
++
++    continued = append_event(
++        restored, "event-3", AT + timedelta(seconds=2), payload={"value": 3}
++    )
++
++    assert continued["sequence"] == 3
++    assert continued["previous_hash"] == original.head()
++    assert restored.head() == continued["hash"]
++    assert restored.verify(restored.records) == []
++    assert restored.verify(
++        restored.records, expected_head=restored.head(), expected_length=3
++    ) == []
++
++
++def test_from_records_restores_duplicate_index():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++    append_event(original, "event-2", AT + timedelta(seconds=1))
++
++    restored = AuditChain.from_records(
++        original.records, expected_head=original.head(), expected_length=2
++    )
++
++    with pytest.raises(ValueError, match="unique"):
++        append_event(restored, "event-1", AT + timedelta(seconds=5))
++    assert len(restored.records) == 2
++    # A distinct ID is still accepted after a rejected duplicate.
++    assert append_event(
++        restored, "event-3", AT + timedelta(seconds=6)
++    )["sequence"] == 3
++
++
++def test_from_records_deep_copy_independence():
++    original = AuditChain()
++    append_event(original, "event-1", AT, payload={"nested": {"value": 1}})
++    append_event(original, "event-2", AT + timedelta(seconds=1))
++
++    restored = AuditChain.from_records(
++        original.records, expected_head=original.head(), expected_length=2
++    )
++
++    # Mutating either side does not affect the other.
++    restored.records[0]["payload"]["nested"]["value"] = 99
++    assert original.records[0]["payload"]["nested"]["value"] == 1
++    assert original.verify(original.records) == []
++    assert restored.verify(restored.records) == ["BAD_HASH"]
++
++    original.records[1]["actor"] = "someone-else"
++    assert restored.records[1]["actor"] == "actor-1"
++    assert restored.verify(restored.records) == ["BAD_HASH"]
++    assert original.verify(original.records) == ["BAD_HASH"]
++
++    # Appending to the restored chain leaves the source untouched.
++    append_event(restored, "event-3", AT + timedelta(seconds=2))
++    assert len(original.records) == 2
++    assert original.head() == original.records[-1]["hash"]
++
++
++def test_from_records_accepts_iterators_and_empty_snapshots():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++
++    restored = AuditChain.from_records(
++        iter(deepcopy(original.records)),
++        expected_head=original.head(),
++        expected_length=1,
++    )
++    assert restored.records == original.records
++
++    empty = AuditChain.from_records(
++        [], expected_head=GENESIS_HASH, expected_length=0
++    )
++    assert empty.records == []
++    assert empty.head() == GENESIS_HASH
++    assert empty.previous_hash == GENESIS_HASH
++    assert append_event(empty)["sequence"] == 1
++    assert empty.verify(empty.records) == []
++
++
++def test_from_records_rejects_wrong_anchors():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++    append_event(original, "event-2", AT + timedelta(seconds=1))
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            original.records, expected_head="f" * 64, expected_length=2
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH"
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            original.records, expected_head=original.head(), expected_length=3
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: LENGTH_MISMATCH"
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            original.records, expected_head="f" * 64, expected_length=3
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH, LENGTH_MISMATCH"
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records([], expected_head=GENESIS_HASH, expected_length=1)
++    assert str(excinfo.value) == "INVALID_CHAIN: LENGTH_MISMATCH"
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records([], expected_head="f" * 64, expected_length=0)
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH"
++
++    # The trusted anchors are required keyword arguments.
++    with pytest.raises(TypeError):
++        AuditChain.from_records(original.records)
++    with pytest.raises(TypeError):
++        AuditChain.from_records(original.records, expected_head=original.head())
++    with pytest.raises(TypeError):
++        AuditChain.from_records(original.records, expected_length=2)
++
++    # Non-integer lengths and non-string heads are never accepted.
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            original.records, expected_head=original.head(), expected_length=2.0
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: LENGTH_MISMATCH"
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            original.records, expected_head=None, expected_length=2
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH"
++
++
++def test_verify_does_not_normalize_stored_timestamps():
++    chain = AuditChain()
++    append_event(chain, "event-1", AT)
++
++    # A UTC offset form is a malformed stored timestamp, not a rewrite target.
++    variants = [
++        "2024-06-15T14:00:00+02:00",
++        "2024-06-15T12:00:00+00:00",
++        "2024-06-15T12:00:00.000Z",
++        "2024-06-15 12:00:00Z",
++        "2024-06-15T12:00:00z",
++    ]
++    for at in variants:
++        variant = deepcopy(chain.records)
++        variant[0]["at"] = at
++        errors = chain.verify(variant)
++        assert "MALFORMED_TIMESTAMP" in errors
++        assert "BAD_HASH" in errors
++        assert "NON_INCREASING_TIMESTAMP" not in errors
++
++    # Verification keeps comparing strictly increasing instants.
++    increasing = AuditChain()
++    append_event(increasing, "event-1", AT)
++    append_event(increasing, "event-2", AT + timedelta(seconds=1))
++    assert increasing.verify(increasing.records) == []
++
++
++def test_from_records_rejects_truncated_and_tampered_snapshots():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++    append_event(original, "event-2", AT + timedelta(seconds=1))
++    trusted_head = original.head()
++
++    # Rehashing the truncated suffix cannot forge the trusted head.
++    truncated = [rehash(deepcopy(original.records[0]))]
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            truncated, expected_head=trusted_head, expected_length=2
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH, LENGTH_MISMATCH"
++
++    tampered = deepcopy(original.records)
++    tampered[0]["payload"]["value"] = 99
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            tampered, expected_head=trusted_head, expected_length=2
++        )
++    # The last record still carries the trusted hash, so only the record hash
++    # check fires: restoring is stricter than plain internal verification.
++    assert str(excinfo.value) == "INVALID_CHAIN: BAD_HASH"
++
++    replayed = deepcopy(original.records)
++    replayed.append(deepcopy(original.records[-1]))
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            replayed, expected_head=trusted_head, expected_length=3
++        )
++    assert str(excinfo.value) == (
++        "INVALID_CHAIN: BAD_PREVIOUS_HASH, BAD_SEQUENCE, DUPLICATE_EVENT_ID, "
++        "NON_INCREASING_TIMESTAMP"
++    )
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            42, expected_head=GENESIS_HASH, expected_length=0
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: MALFORMED_RECORD"
++
++
++def test_from_records_round_trip_persistence():
++    chain = AuditChain()
++    append_event(chain, "event-1", AT)
++
++    snapshot_one = deepcopy(chain.records)
++    restored = AuditChain.from_records(
++        snapshot_one, expected_head=chain.head(), expected_length=1
++    )
++    append_event(restored, "event-2", AT + timedelta(seconds=1))
++
++    # The persisted snapshot of the extended chain restores again with its own
++    # trusted anchors, and agrees with the chain it was copied from.
++    snapshot_two = deepcopy(restored.records)
++    reloaded = AuditChain.from_records(
++        snapshot_two, expected_head=restored.head(), expected_length=2
++    )
++    assert reloaded.records == restored.records
++    assert reloaded.head() == restored.head()
++    assert reloaded.verify(
++        reloaded.records, expected_head=reloaded.head(), expected_length=2
++    ) == []
++    assert append_event(
++        reloaded, "event-3", AT + timedelta(seconds=2)
++    )["previous_hash"] == restored.head()
++
++    # Anchoring a non-empty snapshot to the genesis hash is always wrong.
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            snapshot_two, expected_head=GENESIS_HASH, expected_length=2
++        )
++    assert str(excinfo.value) == "INVALID_CHAIN: HEAD_MISMATCH"
++
++
++def test_restored_instances_are_independent():
++    original = AuditChain()
++    append_event(original, "event-1", AT)
++
++    left = AuditChain.from_records(
++        deepcopy(original.records), expected_head=original.head(), expected_length=1
++    )
++    right = AuditChain.from_records(
++        deepcopy(original.records), expected_head=original.head(), expected_length=1
++    )
++
++    assert left.records == right.records
++    assert left is not right
++
++    # Extending one restore never affects the other.
++    second_left = append_event(left, "event-2", AT + timedelta(seconds=1))
++    assert len(right.records) == 1
++    assert right.head() == original.head()
++    assert left.records[1] is second_left
++
++    # Identical prefixes hash identically, so a parallel append agrees.
++    second_right = append_event(right, "event-2", AT + timedelta(seconds=1))
++    assert second_left["hash"] == second_right["hash"]
++    assert left.head() == right.head()
++    assert left.records is not right.records
++    assert left.records[0] is not right.records[0]
++
++    # Event IDs stay chain-local.
++    assert "event-1" in left._event_ids and "event-1" in right._event_ids
++    assert left._event_ids is not right._event_ids
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/audit.py b/trialops/audit.py
+--- a/trialops/audit.py	2026-11-13 20:17:29
++++ b/trialops/audit.py	2026-11-13 20:35:48
+@@ -82,7 +82,6 @@
+         self.records: list[dict[str, Any]] = []
+         self._event_ids: set[str] = set()
+ 
+-
+     def head(self) -> str:
+         """Return the current trusted head, or the genesis hash when empty."""
+ 
+@@ -128,6 +127,55 @@
+         self._event_ids.add(event_id)
+         self.previous_hash = record["hash"]
+         return record
++
++    @classmethod
++    def from_records(
++        cls,
++        records: Any,
++        *,
++        expected_head: str,
++        expected_length: int,
++    ) -> "AuditChain":
++        """Restore a persisted snapshot validated against trusted anchors.
++
++        Both anchors are required: ``expected_head`` is the hash of the last
++        record (``GENESIS_HASH`` for an empty snapshot) and
++        ``expected_length`` is the number of records. The input is materialized
++        exactly once, verified with those anchors, and only then deep copied
++        into an independent chain that can be extended further.
++        """
++
++        try:
++            materialized = list(records)
++        except (TypeError, ValueError):
++            raise ValueError("INVALID_CHAIN: MALFORMED_RECORD") from None
++
++        errors = set(
++            cls.verify(
++                materialized,
++                expected_head=expected_head,
++                expected_length=expected_length,
++            )
++        )
++        # ``verify`` treats ``None`` anchors as "not supplied"; a restore always
++        # requires both trusted anchors, so reject anything that is not usable.
++        if not isinstance(expected_head, str):
++            errors.add("HEAD_MISMATCH")
++        if type(expected_length) is not int:
++            errors.add("LENGTH_MISMATCH")
++        if errors:
++            raise ValueError("INVALID_CHAIN: " + ", ".join(sorted(errors)))
++
++        try:
++            restored = deepcopy(materialized)
++        except (TypeError, ValueError, AttributeError, RecursionError):
++            raise ValueError("INVALID_CHAIN: MALFORMED_RECORD") from None
++
++        chain = cls()
++        chain.records = restored
++        chain._event_ids = {record["event_id"] for record in restored}
++        chain.previous_hash = restored[-1]["hash"] if restored else GENESIS_HASH
++        return chain
+ 
+     @staticmethod
+     def verify(

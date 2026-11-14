@@ -1,0 +1,320 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_privacy.py b/tests/test_privacy.py
+--- a/tests/test_privacy.py	2026-11-13 14:56:26
++++ b/tests/test_privacy.py	2026-11-14 11:16:49
+@@ -141,6 +141,46 @@
+     assert set(result["rows"][0]) == {"pseudonym", "country", "birth_year", "visits"}
+ 
+ 
++def test_signed_on_boundary_and_purpose_scoping():
++    future = make_subject("future")
++    future["consents"][0]["signed_on"] = "2024-06-16"
++    other = make_subject("other")
++    other["consents"][0]["purpose"] = "marketing"
++    signed_today = make_subject("today")
++
++    result = export_subjects(
++        [future, other, signed_today], purpose="research", secret="test-secret", on=ON
++    )
++    assert [row["pseudonym"] for row in result["rows"]] == [pseudonym("today")]
++
++
++def test_output_is_deterministic_regardless_of_input_order():
++    subjects = [make_subject(f"subject-{index}") for index in range(5)]
++    first = export_subjects(subjects, purpose="research", secret="test-secret", on=ON)
++    second = export_subjects(
++        list(reversed(deepcopy(subjects))), purpose="research", secret="test-secret", on=ON
++    )
++    assert first == second
++    assert canonical(first) == canonical(second)
++    other_purpose = export_subjects(
++        [make_subject("subject-0", consents=[{"purpose": "qa", "signed_on": "2024-01-01"}])],
++        purpose="qa",
++        secret="test-secret",
++        on=ON,
++    )
++    assert other_purpose["rows"][0]["pseudonym"] == pseudonym("subject-0", purpose="qa")
++    assert other_purpose["rows"][0]["pseudonym"] != pseudonym("subject-0")
++
++
++@pytest.mark.parametrize(
++    ("purpose", "secret"), [("", "test-secret"), ("research", ""), (None, "s"), ("r", None)]
++)
++def test_empty_or_missing_purpose_and_secret_are_rejected(purpose, secret):
++    with pytest.raises(ValueError) as caught:
++        export_subjects([make_subject()], purpose=purpose, secret=secret, on=ON)
++    assert "test-secret" not in str(caught.value)
++
++
+ def test_id_allowlist_accepts_ascii_word_dash_and_rejects_other_text():
+     allowed = make_subject("AZaz09_-")
+     result = export_subjects(
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_reuse_export.py b/tests/test_reuse_export.py
+--- a/tests/test_reuse_export.py	1970-01-01 01:00:00
++++ b/tests/test_reuse_export.py	2026-11-14 11:16:54
+@@ -0,0 +1,231 @@
++from copy import deepcopy
++from datetime import date, datetime, timedelta, timezone
++import json
++
++import pytest
++
++import trialops.governance as governance
++import trialops.privacy as privacy
++from trialops.governance import apply_reuse_action, execute_reuse_export
++from trialops.privacy import export_subjects
++
++
++PURPOSE = "synthetic methods research"
++SECRET = "super-secret-key"
++# 23:30 at UTC-05:00 is 2025-01-02 in UTC.
++NOW = datetime(2025, 1, 1, 23, 30, tzinfo=timezone(timedelta(hours=-5)))
++UTC_DAY = date(2025, 1, 2)
++IDENTIFIERS = ("sensitive-id-1", "sensitive-id-2", "Fictional Person",
++               "person@example.test", "1990-04-03", SECRET)
++
++
++def make_request(status="approved", **changes):
++    value = {
++        "id": "reuse-001",
++        "requester": "alice",
++        "reviewer": "bob",
++        "purpose": PURPOSE,
++        "status": status,
++        "retention_until": "2025-06-30",
++        "approval_expires_on": "2025-02-01",
++        "privacy_plan": {
++            "algorithm": "hmac-sha256",
++            "domain": PURPOSE,
++            "fields": ["pseudonym", "country", "birth_year", "visits"],
++        },
++        "metadata": {"representative": True, "complete": True, "quality_score": 0.95},
++        "history": [{"action": "approve", "actor": "bob", "at": "2025-01-01T00:00:00Z"}],
++    }
++    value.update(changes)
++    return value
++
++
++def make_subject(subject_id, **changes):
++    record = {
++        "id": subject_id,
++        "name": "Fictional Person",
++        "birth_date": "1990-04-03",
++        "email": "person@example.test",
++        "country": "NZ",
++        "visits": ["2024-05-01", "2024-01-02"],
++        # Signed exactly on the UTC day: only active if the UTC date is used.
++        "consents": [{"purpose": PURPOSE, "signed_on": UTC_DAY.isoformat()}],
++        "purge_after": UTC_DAY.isoformat(),
++    }
++    record.update(changes)
++    return record
++
++
++class CountingSubjects:
++    """Iterable that records how many times it was consumed."""
++
++    def __init__(self, records):
++        self.records = records
++        self.iterations = 0
++
++    def __iter__(self):
++        self.iterations += 1
++        return iter(self.records)
++
++
++def assert_no_identifiers(value):
++    text = json.dumps(value, ensure_ascii=False, default=str)
++    for identifier in IDENTIFIERS:
++        assert identifier not in text
++
++
++def test_end_to_end_execution_returns_unchanged_export():
++    request = make_request()
++    request_snapshot = deepcopy(request)
++    records = [make_subject("sensitive-id-2"), make_subject("sensitive-id-1")]
++    records_snapshot = deepcopy(records)
++    subjects = CountingSubjects(records)
++
++    executed = execute_reuse_export(
++        request, subjects, actor="alice", secret=SECRET, now=NOW
++    )
++
++    expected = export_subjects(
++        deepcopy(records), purpose=PURPOSE, secret=SECRET, on=UTC_DAY
++    )
++    assert expected["manifest"]["count"] == 2
++    assert executed["execution_result"] == expected
++    assert executed["status"] == "executed"
++    assert executed["history"][:-1] == request_snapshot["history"]
++    assert executed["history"][-1] == {
++        "action": "execute", "actor": "alice", "at": "2025-01-02T04:30:00Z"
++    }
++    for key in request_snapshot:
++        if key not in ("status", "history"):
++            assert executed[key] == request_snapshot[key]
++    assert subjects.iterations == 1
++    assert request == request_snapshot
++    assert records == records_snapshot
++    assert_no_identifiers(executed)
++
++    with pytest.raises(ValueError) as caught:
++        execute_reuse_export(executed, subjects, actor="alice", secret=SECRET, now=NOW)
++    assert str(caught.value) == "INVALID_STATE"
++    assert subjects.iterations == 1
++
++
++def test_delegates_once_to_governance_and_export(monkeypatch):
++    governance_calls = []
++    export_calls = []
++    real_apply = governance.apply_reuse_action
++    real_export = privacy.export_subjects
++
++    def spy_apply(*args, **kwargs):
++        governance_calls.append((args, kwargs))
++        return real_apply(*args, **kwargs)
++
++    def spy_export(subjects, **kwargs):
++        export_calls.append(kwargs)
++        return real_export(subjects, **kwargs)
++
++    monkeypatch.setattr(governance, "apply_reuse_action", spy_apply)
++    monkeypatch.setattr(privacy, "export_subjects", spy_export)
++
++    execute_reuse_export(
++        make_request(), [make_subject("sensitive-id-1")],
++        actor="alice", secret=SECRET, now=NOW,
++    )
++    assert len(governance_calls) == 1
++    args, kwargs = governance_calls[0]
++    assert args[1:] == ("execute", "alice", NOW)
++    assert callable(kwargs["executor"])
++    assert export_calls == [{"purpose": PURPOSE, "secret": SECRET, "on": UTC_DAY}]
++
++
++@pytest.mark.parametrize(
++    ("request_value", "actor", "error", "code"),
++    [
++        (make_request(), "bob", PermissionError, "REQUESTER_REQUIRED"),
++        (make_request("submitted"), "alice", ValueError, "INVALID_STATE"),
++        (make_request(approval_expires_on="2025-01-01"), "alice", ValueError, "APPROVAL_EXPIRED"),
++        (make_request(retention_until="2025-01-01"), "alice", ValueError, "RETENTION_EXPIRED"),
++        (make_request(metadata={}), "alice", ValueError, "METADATA_REQUIRED"),
++    ],
++)
++def test_governance_failures_reject_before_consuming_subjects(
++    request_value, actor, error, code
++):
++    subjects = CountingSubjects([make_subject("sensitive-id-1")])
++    snapshot = deepcopy(request_value)
++    with pytest.raises(error) as caught:
++        execute_reuse_export(request_value, subjects, actor=actor, secret=SECRET, now=NOW)
++    assert str(caught.value) == code
++    assert subjects.iterations == 0
++    assert request_value == snapshot
++
++
++def test_invalid_now_rejects_before_consuming_subjects():
++    subjects = CountingSubjects([make_subject("sensitive-id-1")])
++    with pytest.raises(ValueError, match="INVALID_NOW"):
++        execute_reuse_export(
++            make_request(), subjects, actor="alice", secret=SECRET,
++            now=datetime(2025, 1, 2),
++        )
++    assert subjects.iterations == 0
++
++
++@pytest.mark.parametrize(
++    ("records", "secret"),
++    [
++        ([make_subject("sensitive-id-1"), make_subject("sensitive-id-1")], SECRET),
++        ([make_subject("sensitive-id-1", birth_date="person@example.test")], SECRET),
++        ([make_subject("sensitive id-1")], SECRET),
++        ([make_subject("sensitive-id-1")], ""),
++    ],
++)
++def test_export_failures_roll_back_as_execution_failed(records, secret):
++    request = make_request()
++    snapshot = deepcopy(request)
++    subjects = CountingSubjects(records)
++    with pytest.raises(ValueError) as caught:
++        execute_reuse_export(request, subjects, actor="alice", secret=secret, now=NOW)
++    assert str(caught.value) == "EXECUTION_FAILED"
++    # Invalid secrets are rejected before iterating; otherwise exactly once.
++    assert subjects.iterations == (0 if secret == "" else 1)
++    assert request == snapshot
++    assert request["status"] == "approved"
++    assert "execution_result" not in request
++    for identifier in IDENTIFIERS + ("sensitive id-1",):
++        assert identifier not in str(caught.value)
++        assert identifier not in str(caught.value.__cause__)
++
++    # The untouched approved request can still be executed successfully.
++    executed = execute_reuse_export(
++        request, [make_subject("sensitive-id-1")], actor="alice", secret=SECRET, now=NOW
++    )
++    assert executed["status"] == "executed"
++    assert executed["execution_result"]["manifest"]["count"] == 1
++
++
++def test_executor_uses_approved_snapshot_purpose_and_utc_date():
++    # Consent for a different purpose is ignored; a consent signed on the
++    # local (non-UTC) date boundary is respected because UTC date is used.
++    records = [
++        make_subject("sensitive-id-1"),
++        make_subject("sensitive-id-2", consents=[{"purpose": "other", "signed_on": "2024-01-01"}]),
++        make_subject("sensitive-id-3", purge_after="2025-01-01"),
++    ]
++    executed = execute_reuse_export(
++        make_request(), records, actor="alice", secret=SECRET, now=NOW
++    )
++    assert executed["execution_result"] == export_subjects(
++        [records[0]], purpose=PURPOSE, secret=SECRET, on=UTC_DAY
++    )
++
++
++def test_full_workflow_from_draft():
++    draft = make_request("draft", history=[])
++    del draft["approval_expires_on"]
++    start = datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc)
++    submitted = apply_reuse_action(draft, "submit", "alice", start)
++    approved = apply_reuse_action(submitted, "approve", "bob", start)
++    executed = execute_reuse_export(
++        approved, [make_subject("sensitive-id-1")], actor="alice", secret=SECRET, now=NOW
++    )
++    assert [entry["action"] for entry in executed["history"]] == ["submit", "approve", "execute"]
++    assert_no_identifiers(executed)
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/governance.py b/trialops/governance.py
+--- a/trialops/governance.py	2026-11-13 14:56:35
++++ b/trialops/governance.py	2026-11-14 11:16:13
+@@ -163,3 +163,31 @@
+         }
+     )
+     return result
++
++
++def execute_reuse_export(
++    request: dict[str, object],
++    subjects,
++    *,
++    actor: str,
++    secret: str,
++    now: datetime,
++) -> dict[str, object]:
++    """Execute an approved reuse request by running a pseudonymized export.
++
++    Governance checks run before ``subjects`` is touched; the export runs at
++    most once, inside the governance executor, against the approved snapshot.
++    """
++    from trialops.privacy import export_subjects
++
++    def executor(approved_snapshot: dict[str, object]) -> dict[str, object]:
++        # ``now`` has already been validated by apply_reuse_action.
++        on = now.astimezone(timezone.utc).date()
++        return export_subjects(
++            subjects,
++            purpose=approved_snapshot.get("purpose"),
++            secret=secret,
++            on=on,
++        )
++
++    return apply_reuse_action(request, "execute", actor, now, executor=executor)

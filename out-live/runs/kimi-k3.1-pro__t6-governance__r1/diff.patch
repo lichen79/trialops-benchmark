@@ -1,0 +1,28 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_governance.py b/tests/test_governance.py
+--- a/tests/test_governance.py	2026-11-13 14:57:35
++++ b/tests/test_governance.py	2026-11-14 11:19:28
+@@ -158,6 +158,24 @@
+     assert approved["history"] == []
+ 
+ 
++def test_repeated_execution_is_invalid_without_another_executor_call():
++    approved = request("approved", approval_expires_on="2025-02-01")
++    calls = []
++
++    def executor(approved_request):
++        calls.append(approved_request)
++        return {"receipt": "synthetic-execution-001"}
++
++    executed = apply_reuse_action(approved, "execute", "alice", NOW, executor)
++    snapshot = deepcopy(executed)
++
++    with pytest.raises(ValueError, match="INVALID_STATE"):
++        apply_reuse_action(executed, "execute", "alice", NOW, executor)
++
++    assert len(calls) == 1
++    assert executed == snapshot
++
++
+ def test_expire_is_strict_and_appends_history_for_any_actor():
+     approved = request("approved", approval_expires_on="2025-01-01")
+     with pytest.raises(ValueError, match="INVALID_STATE"):

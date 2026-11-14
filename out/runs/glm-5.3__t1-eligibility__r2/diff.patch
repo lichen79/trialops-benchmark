@@ -1,0 +1,670 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_eligibility.py b/tests/test_eligibility.py
+--- a/tests/test_eligibility.py	2026-11-13 14:56:26
++++ b/tests/test_eligibility.py	2026-11-13 20:30:08
+@@ -1,4 +1,4 @@
+-from datetime import date
++from datetime import date, datetime
+ 
+ import pytest
+ 
+@@ -25,87 +25,422 @@
+     }
+ 
+ 
+-def test_same_day_consent_and_inclusive_age_and_lab_boundaries():
++ON = date(2024, 6, 15)
++
++
++def run(subject=None, protocol=None, on=ON):
++    return evaluate_subject(
++        make_subject() if subject is None else subject,
++        make_protocol() if protocol is None else protocol,
++        on,
++    )
++
++
++def test_leap_day_age_uses_the_calendar_of_the_evaluation_date():
+     protocol = make_protocol()
+-    protocol["min_age"] = protocol["max_age"] = 24
++    protocol.update(min_age=24, max_age=24, labs={}, exclusions=[])
+     subject = make_subject()
+-    subject["labs"] = {"A": 1, "Z": 20}
++    subject.update(
++        birth_date="2000-02-29",
++        consents=[{"version": "v2", "signed_on": "2024-01-01"}],
++        labs={},
++    )
+ 
+-    assert evaluate_subject(subject, protocol, date(2024, 6, 15)) == {
++    assert run(subject, protocol, date(2024, 2, 28))["reasons"] == ["AGE_BELOW_MIN"]
++    assert run(subject, protocol, date(2024, 2, 29))["eligible"] is True
++    assert run(subject, protocol, date(2024, 3, 1))["eligible"] is True
++
++
++def test_leap_day_birthday_reaches_age_on_march_first_in_non_leap_year():
++    protocol = make_protocol()
++    protocol.update(min_age=25, max_age=28, labs={}, exclusions=[])
++    subject = make_subject()
++    subject.update(
++        birth_date="2000-02-29",
++        consents=[{"version": "v2", "signed_on": "2024-01-01"}],
++        labs={},
++    )
++
++    assert run(subject, protocol, date(2025, 2, 28))["reasons"] == ["AGE_BELOW_MIN"]
++    assert run(subject, protocol, date(2025, 3, 1))["eligible"] is True
++    # In leap years the anniversary is the 29th, not the 28th.
++    assert run(subject, protocol, date(2028, 2, 28))["reasons"] == ["AGE_BELOW_MIN"]
++    assert run(subject, protocol, date(2028, 2, 29))["eligible"] is True
++    assert run(subject, protocol, date(2028, 3, 1))["eligible"] is True
++
++
++def test_same_day_consent_is_selected_and_counts_as_signed():
++    subject = make_subject()
++    subject["consents"] = [
++        {"version": "v1", "signed_on": "2024-01-01"},
++        {"version": "v2", "signed_on": "2024-06-15"},
++    ]
++    protocol = make_protocol()
++    protocol["consent_valid_from"] = "2024-06-15"
++
++    assert run(subject, protocol) == {
+         "eligible": True,
+         "reasons": [],
+         "consent_version": "v2",
+     }
+ 
+ 
+-def test_reason_order_and_retired_wrong_consent_version():
++def test_tied_signature_dates_select_the_last_listed_consent():
++    subject = make_subject()
++    subject["consents"] = [
++        {"version": "v1", "signed_on": "2024-06-15"},
++        {"version": "v2", "signed_on": "2024-06-15"},
++    ]
+     protocol = make_protocol()
++    protocol["consent_valid_from"] = "2024-06-15"
++
++    assert run(subject, protocol) == {
++        "eligible": True,
++        "reasons": [],
++        "consent_version": "v2",
++    }
++
++
++def test_wrong_version_selected_same_day_returns_selected_version():
+     subject = make_subject()
+-    subject.update(
+-        birth_date="1970-01-01",
+-        consents=[{"version": "v1", "signed_on": "2023-12-31"}],
+-        flags=["PRIOR", "DO_NOT_ENROLL"],
+-        labs={"Z": 21, "A": 0},
+-    )
++    subject["consents"] = [
++        {"version": "v1", "signed_on": "2024-06-15"},
++        {"version": "v2", "signed_on": "2024-06-15"},
++    ]
++    protocol = make_protocol()
++    protocol["required_consent_version"] = "v9"
+ 
+-    result = evaluate_subject(subject, protocol, date(2024, 6, 15))
++    result = run(subject, protocol)
+ 
++    assert result["consent_version"] == "v2"
++    assert result["reasons"] == ["CONSENT_VERSION"]
++
++
++def test_retired_consent_is_selected_without_falling_back_to_valid_consent():
++    subject = make_subject()
++    subject["consents"] = [
++        {"version": "v1", "signed_on": "2024-01-05"},
++        {"version": "v9", "signed_on": "2024-03-01"},
++        {"version": "v2", "signed_on": "2024-02-01"},
++    ]
++
++    result = run(subject)
++
++    assert result["consent_version"] == "v9"
++    assert result["reasons"] == ["CONSENT_VERSION"]
++
++
++def test_consent_signed_before_valid_from_reports_both_consent_reasons():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v1", "signed_on": "2023-06-15"}]
++
++    result = run(subject)
++
+     assert result == {
+         "eligible": False,
+-        "reasons": [
+-            "CONSENT_MISSING",
+-            "CONSENT_VERSION",
+-            "AGE_ABOVE_MAX",
+-            "EXCLUSION_DO_NOT_ENROLL",
+-            "EXCLUSION_PRIOR",
+-            "LAB_A_LOW",
+-            "LAB_Z_HIGH",
+-        ],
++        "reasons": ["CONSENT_MISSING", "CONSENT_VERSION"],
+         "consent_version": "v1",
+     }
+ 
+ 
+-def test_leap_day_birthday_is_computed_on_the_evaluation_date():
++def test_consent_signed_after_on_is_not_selected():
++    subject = make_subject()
++    subject["consents"] = [
++        {"version": "v2", "signed_on": "2024-06-16"},
++        {"version": "v1", "signed_on": "2024-06-15"},
++    ]
++
++    result = run(subject)
++
++    assert result["consent_version"] == "v1"
++    assert result["reasons"] == ["CONSENT_VERSION"]
++
++
++def test_no_usable_consent_returns_null_version():
++    subject = make_subject()
++    subject["consents"] = []
++
++    assert run(subject) == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-16"}]
++
++    assert run(subject) == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++
++def test_exact_age_boundaries_are_inclusive():
+     protocol = make_protocol()
+-    protocol.update(min_age=24, max_age=24, labs={}, exclusions=[])
++    protocol.update(min_age=18, max_age=30, labs={}, exclusions=[])
++
+     subject = make_subject()
+     subject.update(
+-        birth_date="2000-02-29",
++        birth_date="2006-06-15",
+         consents=[{"version": "v2", "signed_on": "2024-01-01"}],
+         labs={},
+     )
++    assert run(subject, protocol, date(2024, 6, 15))["eligible"] is True
++    assert run(subject, protocol, date(2024, 6, 14))["reasons"] == ["AGE_BELOW_MIN"]
+ 
+-    before_birthday = evaluate_subject(subject, protocol, date(2024, 2, 28))
+-    on_birthday = evaluate_subject(subject, protocol, date(2024, 3, 1))
++    subject = make_subject()
++    subject.update(
++        birth_date="1994-06-16",
++        consents=[{"version": "v2", "signed_on": "2024-01-01"}],
++        labs={},
++    )
++    assert run(subject, protocol, date(2024, 6, 16))["eligible"] is True
++    assert run(subject, protocol, date(2025, 6, 15))["eligible"] is True
++    assert run(subject, protocol, date(2025, 6, 16))["reasons"] == ["AGE_ABOVE_MAX"]
+ 
+-    assert before_birthday["reasons"] == ["AGE_BELOW_MIN"]
+-    assert on_birthday["eligible"] is True
+ 
++def test_exact_lab_boundaries_are_inclusive():
++    subject = make_subject()
++    subject["labs"] = {"A": 1, "Z": 10}
++    assert run(subject)["eligible"] is True
+ 
+-def test_latest_consent_across_versions_never_falls_back_to_older_valid_consent():
+     subject = make_subject()
+-    subject["consents"] = [
+-        {"version": "v9", "signed_on": "2025-01-01"},
+-        {"version": "v1", "signed_on": "2024-02-01"},
+-        {"version": "v2", "signed_on": "2024-01-01"},
++    subject["labs"] = {"A": 3, "Z": 20}
++    assert run(subject)["eligible"] is True
++
++    subject = make_subject()
++    subject["labs"] = {"A": 0.999, "Z": 10}
++    assert run(subject)["reasons"] == ["LAB_A_LOW"]
++
++    subject = make_subject()
++    subject["labs"] = {"A": 3, "Z": 20.001}
++    assert run(subject)["reasons"] == ["LAB_Z_HIGH"]
++
++
++def test_reasons_follow_the_specified_order_across_all_codes():
++    protocol = make_protocol()
++    protocol.update(
++        exclusions=["SECOND", "FIRST"],
++        labs={"Z": [1, 2], "A": [10, 20], "M": [0, 1]},
++    )
++    subject = make_subject()
++    subject.update(
++        birth_date="2015-06-15",
++        flags=["SECOND", "FIRST"],
++        labs={"Z": 3, "A": 9, "M": 1.5},
++    )
++
++    result = run(subject, protocol)
++
++    assert result["reasons"] == [
++        "AGE_BELOW_MIN",
++        "EXCLUSION_SECOND",
++        "EXCLUSION_FIRST",
++        "LAB_A_LOW",
++        "LAB_M_HIGH",
++        "LAB_Z_HIGH",
+     ]
+ 
+-    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
+ 
+-    assert result["consent_version"] == "v1"
+-    assert result["reasons"] == ["CONSENT_VERSION"]
++def test_lab_reasons_are_sorted_by_lab_name():
++    protocol = make_protocol()
++    protocol.update(exclusions=[], labs={"Z": [0, 1], "A": [0, 1]})
++    subject = make_subject()
++    subject.update(flags=[], labs={"A": 2, "Z": 2})
+ 
++    assert run(subject, protocol)["reasons"] == ["LAB_A_HIGH", "LAB_Z_HIGH"]
+ 
+-def test_malformed_required_fields_raise_field_naming_value_errors():
++
++def test_exclusions_are_evaluated_by_name_in_protocol_order():
++    protocol = make_protocol()
++    protocol.update(exclusions=["PRIOR", "DO_NOT_ENROLL"])
+     subject = make_subject()
+-    subject["birth_date"] = "not-a-date"
++    subject.update(flags=["DO_NOT_ENROLL", "PRIOR"])
++
++    result = run(subject, protocol)
++
++    assert result["reasons"] == ["EXCLUSION_PRIOR", "EXCLUSION_DO_NOT_ENROLL"]
++
++
++def test_flags_not_in_exclusions_and_extra_labs_are_ignored():
++    subject = make_subject()
++    subject["flags"] = ["UNRELATED"]
++    subject["labs"] = {"A": 2, "Z": 15, "UNUSED": 999}
++
++    assert run(subject)["eligible"] is True
++
++
++def test_empty_labs_and_exclusions_are_allowed():
++    protocol = make_protocol()
++    protocol.update(labs={}, exclusions=[])
++    subject = make_subject()
++    subject.update(flags=[], labs={})
++
++    assert run(subject, protocol) == {
++        "eligible": True,
++        "reasons": [],
++        "consent_version": "v2",
++    }
++
++
++@pytest.mark.parametrize("field", ["birth_date", "consents", "labs", "flags"])
++def test_missing_subject_fields_raise_value_errors_naming_the_field(field):
++    subject = make_subject()
++    del subject[field]
++    with pytest.raises(ValueError, match=field):
++        run(subject)
++
++
++@pytest.mark.parametrize(
++    "field",
++    [
++        "min_age",
++        "max_age",
++        "required_consent_version",
++        "consent_valid_from",
++        "labs",
++        "exclusions",
++    ],
++)
++def test_missing_protocol_fields_raise_value_errors_naming_the_field(field):
++    protocol = make_protocol()
++    del protocol[field]
++    with pytest.raises(ValueError, match=field):
++        run(protocol=protocol)
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        "not-a-date",
++        "20240615",
++        "2024-W24-1",
++        "2024-06-15T00:00:00",
++        "2024-13-01",
++        "2000-2-29",
++        "",
++        5,
++        None,
++        datetime(2000, 6, 15),
++    ],
++)
++def test_malformed_birth_dates_raise_value_errors_naming_the_field(value):
++    subject = make_subject()
++    subject["birth_date"] = value
+     with pytest.raises(ValueError, match="birth_date"):
+-        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++        run(subject)
+ 
++
++def test_malformed_consent_data_raises_value_errors_naming_the_field():
++    for bad in ["nope", None, {}, ["v2"], [{"version": "v2"}], [{}]]:
++        subject = make_subject()
++        subject["consents"] = bad
++        with pytest.raises(ValueError, match="consents"):
++            run(subject)
++
++    for entry in [
++        {"version": 2, "signed_on": "2024-06-15"},
++        {"version": "", "signed_on": "2024-06-15"},
++        {"version": "v2", "signed_on": "not-a-date"},
++        {"version": "v2", "signed_on": 5},
++        {"version": "v2", "signed_on": "20240615"},
++    ]:
++        subject = make_subject()
++        subject["consents"] = [entry]
++        with pytest.raises(ValueError, match="consents"):
++            run(subject)
++
++
++def test_malformed_subject_labs_and_flags_raise_value_errors():
+     subject = make_subject()
+-    del subject["labs"]["A"]
++    subject["labs"] = "nope"
++    with pytest.raises(ValueError, match="labs"):
++        run(subject)
++
++    subject = make_subject()
++    subject["labs"] = {"A": "2", "Z": 15}
+     with pytest.raises(ValueError, match="labs.A"):
+-        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++        run(subject)
+ 
+-    with pytest.raises(ValueError, match="on"):
+-        evaluate_subject(make_subject(), make_protocol(), "2024-06-15")
++    subject = make_subject()
++    subject["labs"] = {"A": True, "Z": 15}
++    with pytest.raises(ValueError, match="labs.A"):
++        run(subject)
++
++    subject = make_subject()
++    subject["flags"] = "nope"
++    with pytest.raises(ValueError, match="flags"):
++        run(subject)
++
++    subject = make_subject()
++    subject["flags"] = ["DO_NOT_ENROLL", 5]
++    with pytest.raises(ValueError, match="flags"):
++        run(subject)
++
++
++def test_malformed_protocol_data_raises_value_errors():
++    for bad in [18.5, "18", None, True, -1]:
++        protocol = make_protocol()
++        protocol["min_age"] = bad
++        with pytest.raises(ValueError, match="min_age"):
++            run(protocol=protocol)
++
++    for bad in [30.5, "30", None, True, -1]:
++        protocol = make_protocol()
++        protocol["max_age"] = bad
++        with pytest.raises(ValueError, match="max_age"):
++            run(protocol=protocol)
++
++    protocol = make_protocol()
++    protocol["min_age"] = 40
++    with pytest.raises(ValueError, match="min_age"):
++        run(protocol=protocol)
++
++    for bad in ["", None, 2]:
++        protocol = make_protocol()
++        protocol["required_consent_version"] = bad
++        with pytest.raises(ValueError, match="required_consent_version"):
++            run(protocol=protocol)
++
++    for bad in ["not-a-date", "20240615", "2024-W24-1", 5, None, ""]:
++        protocol = make_protocol()
++        protocol["consent_valid_from"] = bad
++        with pytest.raises(ValueError, match="consent_valid_from"):
++            run(protocol=protocol)
++
++    protocol = make_protocol()
++    protocol["labs"] = "nope"
++    with pytest.raises(ValueError, match="labs"):
++        run(protocol=protocol)
++
++    for bad in [[1], [3, 1], [None, 3], [True, 3], "ab", [1, 2, 3], (1, 3)]:
++        protocol = make_protocol()
++        protocol["labs"] = {"A": bad, "Z": [10, 20]}
++        with pytest.raises(ValueError, match="labs.A"):
++            run(protocol=protocol)
++
++    protocol = make_protocol()
++    protocol["labs"] = {"A": [1, 3], "Z": [10, 20], "Q": [0, 1]}
++    with pytest.raises(ValueError, match="labs.Q"):
++        run(protocol=protocol)
++
++    protocol = make_protocol()
++    protocol["exclusions"] = "nope"
++    with pytest.raises(ValueError, match="exclusions"):
++        run(protocol=protocol)
++
++    protocol = make_protocol()
++    protocol["exclusions"] = ["DO_NOT_ENROLL", 5]
++    with pytest.raises(ValueError, match="exclusions"):
++        run(protocol=protocol)
++
++
++def test_non_mapping_inputs_and_bad_on_raise_value_errors():
++    with pytest.raises(ValueError, match="subject"):
++        run(subject="nope")
++    with pytest.raises(ValueError, match="protocol"):
++        run(protocol="nope")
++    for bad in ["2024-06-15", datetime(2024, 6, 15), None, 5]:
++        with pytest.raises(ValueError, match="on"):
++            run(on=bad)
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_scratch_probe.py b/tests/test_scratch_probe.py
+--- a/tests/test_scratch_probe.py	1970-01-01 01:00:00
++++ b/tests/test_scratch_probe.py	2026-11-13 20:28:16
+@@ -0,0 +1,77 @@
++from datetime import date, datetime
++
++from trialops.eligibility import evaluate_subject
++
++
++def make_protocol():
++    return {
++        "min_age": 18,
++        "max_age": 30,
++        "required_consent_version": "v2",
++        "consent_valid_from": "2024-01-01",
++        "labs": {"A": [1, 3], "Z": [10, 20]},
++        "exclusions": ["DO_NOT_ENROLL", "PRIOR"],
++    }
++
++
++def make_subject():
++    return {
++        "birth_date": "2000-06-15",
++        "consents": [{"version": "v2", "signed_on": "2024-06-15"}],
++        "labs": {"A": 2, "Z": 15},
++        "flags": [],
++    }
++
++
++def show(label, fn):
++    try:
++        print(label, "=> OK", fn())
++    except Exception as exc:  # noqa: BLE001
++        print(label, "=>", type(exc).__name__, repr(str(exc)))
++
++
++def mod(**kw):
++    s = make_subject()
++    s.update(kw)
++    return s
++
++
++def pmod(**kw):
++    p = make_protocol()
++    p.update(kw)
++    return p
++
++
++ON = date(2024, 6, 15)
++
++
++def run(subject, protocol, on=ON):
++    return lambda: evaluate_subject(subject, protocol, on)
++
++
++print("=== subject required fields ===")
++for key in ["birth_date", "consents", "labs", "flags"]:
++    s = make_subject()
++    del s[key]
++    show(f"del subject.{key}", run(s, make_protocol()))
++
++print("=== protocol required fields ===")
++for key in ["min_age", "max_age", "required_consent_version", "consent_valid_from", "labs", "exclusions"]:
++    p = make_protocol()
++    del p[key]
++    show(f"del protocol.{key}", run(make_subject(), p))
++
++print("=== subject birth_date malformed ===")
++for v in ["not-a-date", "20240615", "2024-W24-1", "2024-06-15T00:00:00", 5, None, datetime(2000, 6, 15), "2024-13-01", "2000-2-29", ""]:
++    show(f"birth_date={v!r}", run(mod(birth_date=v), make_protocol()))
++
++print("=== consents malformed ===")
++for v in ["nope", {}, None, [{}], ["v2"], [{"version": "v2"}], [{"signed_on": "2024-06-15"}],
++          [{"version": 2, "signed_on": "2024-06-15"}], [{"version": "v2", "signed_on": "bad"}],
++          [{"version": "v2", "signed_on": 5}], [{"version": "", "signed_on": "2024-06-15"}],
++          [{"version": "v2", "signed_on": "2024-06-15", "extra": 1}], [{"version": "v2", "signed_on": "2024-06-15"}, "x"]]:
++    show(f"consents={v!r}", run(mod(consents=v), make_protocol()))
++
++print("=== subject labs malformed ===")
++for v in ["nope", None, {"A": "2", "Z": 15}, {"A": True, "Z": 15}, {"A": 2, "Z": 15}, {"A": 2}]:
++    show(f"labs={v!r}", run(mod(labs=v), make_protocol()))
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/eligibility.py b/trialops/eligibility.py
+--- a/trialops/eligibility.py	2026-11-13 14:50:07
++++ b/trialops/eligibility.py	2026-11-13 20:29:25
+@@ -1,12 +1,13 @@
+ """Deterministic eligibility checks for synthetic screening data."""
+ 
++from collections.abc import Mapping
+ from datetime import date, datetime
+ import math
+-from collections.abc import Mapping
+ from typing import Any
+ 
+ 
+ def _value(mapping: Mapping[str, Any], key: str, prefix: str) -> Any:
++    """Fetch a required key, converting lookup failures into field-naming errors."""
+     try:
+         return mapping[key]
+     except (KeyError, TypeError):
+@@ -19,13 +20,17 @@
+     return value
+ 
+ 
+-def _iso_date(value: Any, field: str) -> date:
+-    if not isinstance(value, str):
++def _date(value: Any, field: str) -> date:
++    """Parse a strict date-only ISO string such as ``2024-06-15``."""
++    if not isinstance(value, str) or len(value) != 10:
+         raise ValueError(f"{field} must be an ISO date")
+     try:
+-        return date.fromisoformat(value)
++        parsed = date.fromisoformat(value)
+     except (TypeError, ValueError, OverflowError):
+         raise ValueError(f"{field} must be an ISO date") from None
++    if parsed.isoformat() != value:
++        raise ValueError(f"{field} must be an ISO date")
++    return parsed
+ 
+ 
+ def _string(value: Any, field: str) -> str:
+@@ -51,6 +56,7 @@
+ 
+ 
+ def _age(birth_date: date, on: date) -> int:
++    """Exact age in whole years on ``on``; a leap-day birthday lands on March 1."""
+     return on.year - birth_date.year - (
+         (on.month, on.day) < (birth_date.month, birth_date.day)
+     )
+@@ -65,22 +71,21 @@
+     when that consent is retired or has the wrong version. All returned reason
+     codes follow the protocol-defined ordering.
+     """
+-
+     subject = _mapping(subject, "subject")
+     protocol = _mapping(protocol, "protocol")
+     if not isinstance(on, date) or isinstance(on, datetime):
+         raise ValueError("on must be a date")
+ 
+-    birth_date = _iso_date(_value(subject, "birth_date", "subject"), "subject.birth_date")
+-    consents = _value(subject, "consents", "subject")
+-    subject_labs = _mapping(_value(subject, "labs", "subject"), "subject.labs")
+-    flags = set(
+-        _string_list(_value(subject, "flags", "subject"), "subject.flags")
++    birth_date = _date(
++        _value(subject, "birth_date", "subject"), "subject.birth_date"
+     )
+ 
+     min_age = _value(protocol, "min_age", "protocol")
+     max_age = _value(protocol, "max_age", "protocol")
+-    for value, field in ((min_age, "protocol.min_age"), (max_age, "protocol.max_age")):
++    for value, field in (
++        (min_age, "protocol.min_age"),
++        (max_age, "protocol.max_age"),
++    ):
+         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+             raise ValueError(f"{field} must be a nonnegative integer")
+     if min_age > max_age:
+@@ -90,7 +95,7 @@
+         _value(protocol, "required_consent_version", "protocol"),
+         "protocol.required_consent_version",
+     )
+-    consent_valid_from = _iso_date(
++    consent_valid_from = _date(
+         _value(protocol, "consent_valid_from", "protocol"),
+         "protocol.consent_valid_from",
+     )
+@@ -101,6 +106,7 @@
+         _value(protocol, "exclusions", "protocol"), "protocol.exclusions"
+     )
+ 
++    consents = _value(subject, "consents", "subject")
+     if not isinstance(consents, list):
+         raise ValueError("subject.consents must be a list")
+     parsed_consents: list[tuple[date, str]] = []
+@@ -110,15 +116,19 @@
+             _value(consent, "version", "subject.consents entry"),
+             "subject.consents.version",
+         )
+-        signed_on = _iso_date(
++        signed_on = _date(
+             _value(consent, "signed_on", "subject.consents entry"),
+             "subject.consents.signed_on",
+         )
+         parsed_consents.append((signed_on, version))
+ 
++    subject_labs = _mapping(_value(subject, "labs", "subject"), "subject.labs")
+     for name, value in subject_labs.items():
+         _string(name, "subject.labs name")
+         _number(value, f"subject.labs.{name}")
++    flags = set(
++        _string_list(_value(subject, "flags", "subject"), "subject.flags")
++    )
+ 
+     lab_ranges: dict[str, tuple[int | float, int | float]] = {}
+     for name, bounds in protocol_labs.items():

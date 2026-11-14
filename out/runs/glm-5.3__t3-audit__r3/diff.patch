@@ -1,0 +1,566 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_audit.py b/tests/test_audit.py
+--- a/tests/test_audit.py	2026-11-13 14:56:35
++++ b/tests/test_audit.py	2026-11-13 20:42:09
+@@ -156,3 +156,301 @@
+     )
+ 
+     assert record["hash"] == "92d5600f044f4bcd2134215e770f49cac60926e50670c3f58930eba13db528ba"
++
++
++def build_chain(count=3):
++    chain = AuditChain()
++    for index in range(count):
++        append_event(
++            chain,
++            f"event-{index + 1}",
++            AT + timedelta(seconds=index),
++            payload={"index": index, "nested": {"value": index}},
++        )
++    return chain
++
++
++def test_from_records_requires_both_trusted_anchors():
++    chain = build_chain(1)
++
++    with pytest.raises(TypeError):
++        AuditChain.from_records(chain.records, expected_length=1)
++    with pytest.raises(TypeError):
++        AuditChain.from_records(chain.records, expected_head=chain.head())
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:LENGTH_MISMATCH$"):
++        AuditChain.from_records(
++            chain.records, expected_head=chain.head(), expected_length=None
++        )
++
++
++def test_restore_and_continue_from_snapshot():
++    original = build_chain(3)
++    snapshot = deepcopy(original.records)
++    trusted_head = original.head()
++
++    restored = AuditChain.from_records(
++        snapshot, expected_head=trusted_head, expected_length=3
++    )
++
++    assert restored.records == snapshot
++    assert restored.head() == trusted_head
++    assert restored.previous_hash == trusted_head
++
++    continued = append_event(
++        restored, "event-4", AT + timedelta(seconds=3), payload={"index": 3}
++    )
++    replayed = append_event(
++        original, "event-4", AT + timedelta(seconds=3), payload={"index": 3}
++    )
++
++    assert continued["sequence"] == 4
++    assert continued["previous_hash"] == trusted_head
++    assert continued["hash"] == replayed["hash"]
++    assert restored.head() == continued["hash"]
++    assert restored.verify(restored.records) == []
++    assert restored.verify(
++        restored.records, expected_head=restored.head(), expected_length=4
++    ) == []
++
++
++def test_from_records_accepts_iterators_and_materializes_once():
++    original = build_chain(2)
++
++    restored = AuditChain.from_records(
++        iter(deepcopy(original.records)),
++        expected_head=original.head(),
++        expected_length=2,
++    )
++
++    assert len(restored.records) == 2
++    assert restored.head() == original.head()
++
++
++def test_restored_chain_keeps_duplicate_event_id_index():
++    original = build_chain(2)
++
++    restored = AuditChain.from_records(
++        original.records, expected_head=original.head(), expected_length=2
++    )
++
++    with pytest.raises(ValueError, match="unique"):
++        append_event(restored, "event-1")
++    assert len(restored.records) == 2
++
++    restored.append(
++        event_id="event-3",
++        actor="actor-1",
++        action="recorded",
++        at=AT + timedelta(seconds=5),
++        payload={},
++    )
++    assert len(restored.records) == 3
++
++
++def test_restored_records_are_deep_copies():
++    original = build_chain(2)
++    snapshot = deepcopy(original.records)
++
++    restored = AuditChain.from_records(
++        snapshot, expected_head=original.head(), expected_length=2
++    )
++
++    assert restored.records is not snapshot
++    assert restored.records[0] is not snapshot[0]
++    assert restored.records[0]["payload"] is not snapshot[0]["payload"]
++    assert restored.records[0]["payload"]["nested"] is not snapshot[0]["payload"]["nested"]
++
++    snapshot[0]["payload"]["nested"]["value"] = 99
++    snapshot[1]["actor"] = "someone-else"
++    assert restored.records[0]["payload"]["nested"]["value"] == 0
++    assert restored.records[1]["actor"] == "actor-1"
++    assert restored.verify(
++        restored.records, expected_head=original.head(), expected_length=2
++    ) == []
++
++    restored.records[0]["payload"]["index"] = 42
++    assert snapshot[0]["payload"]["index"] == 0
++
++
++def test_from_records_rejects_wrong_anchors():
++    original = build_chain(2)
++    records = deepcopy(original.records)
++
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:HEAD_MISMATCH$"):
++        AuditChain.from_records(records, expected_head=GENESIS_HASH, expected_length=2)
++
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:LENGTH_MISMATCH$"):
++        AuditChain.from_records(
++            records, expected_head=original.head(), expected_length=3
++        )
++
++    with pytest.raises(
++        ValueError, match=r"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH$"
++    ):
++        AuditChain.from_records(records, expected_head=GENESIS_HASH, expected_length=3)
++
++
++def test_from_records_rejects_truncated_suffixes():
++    original = build_chain(3)
++    truncated = deepcopy(original.records[:1])
++
++    assert AuditChain.from_records(
++        truncated, expected_head=truncated[-1]["hash"], expected_length=1
++    ).head() == truncated[-1]["hash"]
++
++    with pytest.raises(
++        ValueError, match=r"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH$"
++    ):
++        AuditChain.from_records(
++            truncated, expected_head=original.head(), expected_length=3
++        )
++
++
++def test_from_records_rejects_edits_even_when_rehashed():
++    original = build_chain(3)
++
++    # An un-rehashed edit is caught by the internal hash checks.
++    unrehased = deepcopy(original.records)
++    unrehased[1]["payload"]["nested"]["value"] = 42
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:BAD_HASH$"):
++        AuditChain.from_records(
++            unrehased, expected_head=original.head(), expected_length=3
++        )
++
++    # Rehashing the record restores self-consistency but breaks the head anchor.
++    rehashed = deepcopy(original.records)
++    rehashed[1]["payload"]["nested"]["value"] = 42
++    rehash(rehashed[1])
++    with pytest.raises(ValueError, match="INVALID_CHAIN"):
++        AuditChain.from_records(
++            rehashed, expected_head=original.head(), expected_length=3
++        )
++
++    # A fully rehashed suffix with correct sequence and linkage is only caught
++    # by the trusted head and length anchors.
++    fully_rehashed = deepcopy(original.records)
++    fully_rehashed[1]["payload"]["nested"]["value"] = 42
++    rehash(fully_rehashed[1])
++    fully_rehashed[2]["previous_hash"] = fully_rehashed[1]["hash"]
++    rehash(fully_rehashed[2])
++    assert original.verify(fully_rehashed) == []
++    with pytest.raises(
++        ValueError, match=r"^INVALID_CHAIN:HEAD_MISMATCH$"
++    ):
++        AuditChain.from_records(
++            fully_rehashed, expected_head=original.head(), expected_length=3
++        )
++
++
++def test_restored_instances_are_independent():
++    original = build_chain(2)
++    snapshot = deepcopy(original.records)
++    trusted_head = original.head()
++
++    first = AuditChain.from_records(
++        snapshot, expected_head=trusted_head, expected_length=2
++    )
++    second = AuditChain.from_records(
++        snapshot, expected_head=trusted_head, expected_length=2
++    )
++
++    assert first is not second
++    assert first.records is not second.records
++    assert first.records[0] is not second.records[0]
++
++    append_event(first, "event-3", AT + timedelta(seconds=5))
++
++    assert len(second.records) == 2
++    assert second.head() == trusted_head
++    assert second.verify(
++        second.records, expected_head=trusted_head, expected_length=2
++    ) == []
++    # Appending to one restored chain does not leak into the other.
++    assert append_event(second, "event-3", AT + timedelta(seconds=5))[
++        "sequence"
++    ] == 3
++    with pytest.raises(ValueError, match="unique"):
++        append_event(second, "event-1")
++
++
++def test_empty_snapshot_requires_genesis_head_and_zero_length():
++    empty = AuditChain.from_records(
++        [], expected_head=GENESIS_HASH, expected_length=0
++    )
++
++    assert empty.records == []
++    assert empty.head() == GENESIS_HASH
++    assert empty.previous_hash == GENESIS_HASH
++
++    record = append_event(empty)
++    assert record["sequence"] == 1
++    assert record["previous_hash"] == GENESIS_HASH
++
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:HEAD_MISMATCH$"):
++        AuditChain.from_records([], expected_head="f" * 64, expected_length=0)
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:LENGTH_MISMATCH$"):
++        AuditChain.from_records([], expected_head=GENESIS_HASH, expected_length=1)
++
++
++def test_from_records_reports_sorted_error_codes():
++    original = build_chain(2)
++    broken = deepcopy(original.records)
++    broken[1]["sequence"] = 7
++    broken[1]["event_id"] = broken[0]["event_id"]
++
++    with pytest.raises(ValueError) as excinfo:
++        AuditChain.from_records(
++            broken, expected_head=original.head(), expected_length=2
++        )
++
++    message = str(excinfo.value)
++    assert message.startswith("INVALID_CHAIN:")
++    codes = message.split(":", 1)[1].split(",")
++    assert codes == sorted(set(codes))
++    assert "BAD_SEQUENCE" in codes
++    assert "BAD_HASH" in codes
++    assert "DUPLICATE_EVENT_ID" in codes
++
++
++def test_from_records_rejects_non_iterable_and_malformed_input():
++    with pytest.raises(ValueError, match=r"^INVALID_CHAIN:MALFORMED_RECORD$"):
++        AuditChain.from_records(7, expected_head=GENESIS_HASH, expected_length=1)
++
++    with pytest.raises(ValueError, match="INVALID_CHAIN"):
++        AuditChain.from_records(
++            [object()], expected_head=GENESIS_HASH, expected_length=1
++        )
++
++
++def test_verification_returns_deterministic_sorted_error_lists():
++    chain = build_chain(2)
++    broken = deepcopy(chain.records)
++    broken[1]["sequence"] = 5
++    broken[1]["event_id"] = broken[0]["event_id"]
++
++    first = AuditChain.verify(broken)
++    second = AuditChain.verify(broken)
++
++    assert isinstance(first, list)
++    assert first == second
++    assert first == sorted(first)
++    assert len(first) == len(set(first))
++    assert AuditChain.verify([]) == []
++    assert AuditChain.verify(chain.records) == []
++
++
++def test_verification_does_not_normalize_stored_timestamps():
++    chain = build_chain(1)
++    equivalent = deepcopy(chain.records)
++    equivalent[0]["at"] = "2024-06-15T12:00:00+00:00"
++
++    assert "MALFORMED_TIMESTAMP" in AuditChain.verify(equivalent)
++
++    with pytest.raises(ValueError, match="MALFORMED_TIMESTAMP"):
++        AuditChain.from_records(
++            equivalent, expected_head=chain.head(), expected_length=1
++        )
++
++    naive = deepcopy(chain.records)
++    naive[0]["at"] = "2024-06-15 12:00:00"
++    assert "MALFORMED_TIMESTAMP" in AuditChain.verify(naive)
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/audit.py b/trialops/audit.py
+--- a/trialops/audit.py	2026-11-13 20:17:29
++++ b/trialops/audit.py	2026-11-13 20:42:06
+@@ -82,7 +82,6 @@
+         self.records: list[dict[str, Any]] = []
+         self._event_ids: set[str] = set()
+ 
+-
+     def head(self) -> str:
+         """Return the current trusted head, or the genesis hash when empty."""
+ 
+@@ -129,6 +128,46 @@
+         self.previous_hash = record["hash"]
+         return record
+ 
++    @classmethod
++    def from_records(
++        cls,
++        records: Any,
++        *,
++        expected_head: str,
++        expected_length: int,
++    ) -> "AuditChain":
++        """Restore an independent chain from a persisted, trusted snapshot.
++
++        The snapshot must verify against the trusted ``expected_head`` and
++        ``expected_length`` anchors; an empty snapshot is only valid with the
++        genesis hash and a length of zero.
++        """
++
++        try:
++            materialized = list(records)
++        except (TypeError, ValueError):
++            raise ValueError("INVALID_CHAIN:MALFORMED_RECORD") from None
++
++        errors = cls.verify(
++            materialized, expected_head=expected_head, expected_length=expected_length
++        )
++        if expected_length is None:
++            # A trusted length anchor is required when restoring a snapshot.
++            errors = sorted(set(errors) | {"LENGTH_MISMATCH"})
++        if errors:
++            raise ValueError("INVALID_CHAIN:" + ",".join(sorted(errors)))
++
++        chain = cls()
++        try:
++            chain.records = deepcopy(materialized)
++        except (TypeError, ValueError, RecursionError):
++            raise ValueError("INVALID_CHAIN:MALFORMED_RECORD") from None
++        for record in chain.records:
++            chain._event_ids.add(record["event_id"])
++        if chain.records:
++            chain.previous_hash = chain.records[-1]["hash"]
++        return chain
++
+     @staticmethod
+     def verify(
+         records: Any,
+@@ -139,99 +178,121 @@
+         """Verify internal invariants and optional trusted head and length."""
+ 
+         try:
+-            records = list(records)
++            materialized = list(records)
+         except (TypeError, ValueError):
+             return ["MALFORMED_RECORD"]
+ 
+-        errors: set[str] = set()
+-        if expected_length is not None and (
+-            type(expected_length) is not int or expected_length != len(records)
+-        ):
+-            errors.add("LENGTH_MISMATCH")
+-        if expected_head is not None:
+-            if not records:
+-                actual_head = GENESIS_HASH
+-            elif isinstance(records[-1], dict):
+-                actual_head = records[-1].get("hash")
+-            else:
+-                actual_head = None
+-            if expected_head != actual_head:
+-                errors.add("HEAD_MISMATCH")
+-        seen_event_ids: set[str] = set()
+-        previous_record: Any = None
+-        previous_timestamp: datetime | None = None
++        return _verify_materialized(
++            materialized, expected_head=expected_head, expected_length=expected_length
++        )
+ 
+-        for expected_sequence, record in enumerate(records, start=1):
+-            if not isinstance(record, dict):
+-                errors.add("MALFORMED_RECORD")
+-                previous_record = None
+-                continue
+ 
+-            has_required_fields = _REQUIRED_FIELDS.issubset(record)
+-            if not has_required_fields:
+-                errors.add("MALFORMED_RECORD")
++def _verify_materialized(
++    records: list[Any],
++    *,
++    expected_head: str | None,
++    expected_length: int | None,
++) -> list[str]:
++    """Verify an already materialized list of records."""
+ 
+-            if type(record.get("sequence")) is not int or record.get("sequence") != expected_sequence:
+-                errors.add("BAD_SEQUENCE")
++    errors: set[str] = set()
++    if expected_length is not None and (
++        type(expected_length) is not int or expected_length != len(records)
++    ):
++        errors.add("LENGTH_MISMATCH")
++    if expected_head is not None:
++        if not records:
++            actual_head = GENESIS_HASH
++        elif isinstance(records[-1], dict):
++            actual_head = records[-1].get("hash")
++        else:
++            actual_head = None
++        if expected_head != actual_head:
++            errors.add("HEAD_MISMATCH")
++    seen_event_ids: set[str] = set()
++    previous_record: Any = None
++    previous_timestamp: datetime | None = None
+ 
+-            event_id = record.get("event_id")
+-            if not isinstance(event_id, str) or not event_id.strip():
+-                errors.add("MALFORMED_RECORD")
+-            elif event_id in seen_event_ids:
+-                errors.add("DUPLICATE_EVENT_ID")
+-            else:
+-                seen_event_ids.add(event_id)
++    for expected_sequence, record in enumerate(records, start=1):
++        if not isinstance(record, dict):
++            errors.add("MALFORMED_RECORD")
++            previous_record = None
++            continue
+ 
+-            for field in ("actor", "action"):
+-                value = record.get(field)
+-                if not isinstance(value, str) or not value.strip():
+-                    errors.add("MALFORMED_RECORD")
++        has_required_fields = _REQUIRED_FIELDS.issubset(record)
++        if not has_required_fields:
++            errors.add("MALFORMED_RECORD")
+ 
+-            if not isinstance(record.get("payload"), dict):
+-                errors.add("BAD_PAYLOAD")
++        if (
++            type(record.get("sequence")) is not int
++            or record.get("sequence") != expected_sequence
++        ):
++            errors.add("BAD_SEQUENCE")
+ 
+-            timestamp = _parse_timestamp(record.get("at"))
+-            if timestamp is None:
+-                errors.add("MALFORMED_TIMESTAMP")
+-            else:
+-                if previous_timestamp is not None and timestamp <= previous_timestamp:
+-                    errors.add("NON_INCREASING_TIMESTAMP")
+-                previous_timestamp = timestamp
++        event_id = record.get("event_id")
++        if not isinstance(event_id, str) or not event_id.strip():
++            errors.add("MALFORMED_RECORD")
++        elif event_id in seen_event_ids:
++            errors.add("DUPLICATE_EVENT_ID")
++        else:
++            seen_event_ids.add(event_id)
+ 
+-            current_hash_valid = _valid_hash(record.get("hash"))
+-            previous_hash_valid = _valid_hash(record.get("previous_hash"))
+-            if not current_hash_valid or not previous_hash_valid:
+-                errors.add("MALFORMED_HASH")
++        for field in ("actor", "action"):
++            value = record.get(field)
++            if not isinstance(value, str) or not value.strip():
++                errors.add("MALFORMED_RECORD")
+ 
+-            if previous_hash_valid:
+-                if expected_sequence == 1:
+-                    expected_previous_hash = GENESIS_HASH
+-                elif isinstance(previous_record, dict) and _valid_hash(
+-                    previous_record.get("hash")
+-                ):
+-                    expected_previous_hash = previous_record["hash"]
+-                else:
+-                    expected_previous_hash = None
+-                if (
+-                    expected_previous_hash is not None
+-                    and record["previous_hash"] != expected_previous_hash
+-                ):
+-                    errors.add("BAD_PREVIOUS_HASH")
++        if not isinstance(record.get("payload"), dict):
++            errors.add("BAD_PAYLOAD")
+ 
+-            if current_hash_valid and has_required_fields:
+-                unhashed_record = {
+-                    key: value for key, value in record.items() if key != "hash"
+-                }
+-                try:
+-                    expected_hash = hashlib.sha256(
+-                        _canonical(unhashed_record).encode("utf-8")
+-                    ).hexdigest()
+-                except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+-                    errors.add("BAD_PAYLOAD")
+-                else:
+-                    if record["hash"] != expected_hash:
+-                        errors.add("BAD_HASH")
++        timestamp = _parse_timestamp(record.get("at"))
++        if timestamp is None:
++            errors.add("MALFORMED_TIMESTAMP")
++        else:
++            if previous_timestamp is not None and timestamp <= previous_timestamp:
++                errors.add("NON_INCREASING_TIMESTAMP")
++            previous_timestamp = timestamp
+ 
+-            previous_record = record
++        current_hash_valid = _valid_hash(record.get("hash"))
++        previous_hash_valid = _valid_hash(record.get("previous_hash"))
++        if not current_hash_valid or not previous_hash_valid:
++            errors.add("MALFORMED_HASH")
+ 
+-        return sorted(errors)
++        if previous_hash_valid:
++            if expected_sequence == 1:
++                expected_previous_hash = GENESIS_HASH
++            elif isinstance(previous_record, dict) and _valid_hash(
++                previous_record.get("hash")
++            ):
++                expected_previous_hash = previous_record["hash"]
++            else:
++                expected_previous_hash = None
++            if (
++                expected_previous_hash is not None
++                and record["previous_hash"] != expected_previous_hash
++            ):
++                errors.add("BAD_PREVIOUS_HASH")
++
++        if current_hash_valid and has_required_fields:
++            unhashed_record = {
++                key: value for key, value in record.items() if key != "hash"
++            }
++            try:
++                expected_hash = hashlib.sha256(
++                    _canonical(unhashed_record).encode("utf-8")
++                ).hexdigest()
++            except (
++                TypeError,
++                ValueError,
++                UnicodeError,
++                OverflowError,
++                RecursionError,
++            ):
++                errors.add("BAD_PAYLOAD")
++            else:
++                if record["hash"] != expected_hash:
++                    errors.add("BAD_HASH")
++
++        previous_record = record
++
++    return sorted(errors)

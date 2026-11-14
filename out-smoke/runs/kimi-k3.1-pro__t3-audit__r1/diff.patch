@@ -1,0 +1,112 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_audit.py b/tests/test_audit.py
+--- a/tests/test_audit.py	2026-11-13 14:56:35
++++ b/tests/test_audit.py	2026-11-13 20:19:48
+@@ -146,6 +146,72 @@
+     ) == ["HEAD_MISMATCH", "LENGTH_MISMATCH"]
+ 
+ 
++def test_restore_and_continue_from_generator_snapshot():
++    chain = AuditChain()
++    first = append_event(chain, payload={"nested": {"values": [1, 2]}})
++    append_event(chain, "event-2", AT + timedelta(seconds=1))
++    trusted_head = chain.head()
++
++    restored = AuditChain.from_records(
++        (record for record in chain.records),
++        expected_head=trusted_head,
++        expected_length=2,
++    )
++    third = append_event(restored, "event-3", AT + timedelta(seconds=2))
++
++    assert third["sequence"] == 3
++    assert third["previous_hash"] == trusted_head
++    assert restored.head() == third["hash"]
++    assert restored.verify(restored.records) == []
++    with pytest.raises(ValueError, match="unique"):
++        append_event(restored, "event-2", AT + timedelta(seconds=3))
++
++    # Neither the restored records nor their nested payloads share storage
++    # with the source snapshot.
++    first["payload"]["nested"]["values"].append(99)
++    assert restored.records[0]["payload"] == {"nested": {"values": [1, 2]}}
++    assert len(chain.records) == 2
++
++
++def test_restore_empty_snapshot_and_validate_trusted_anchors():
++    empty = AuditChain.from_records(
++        [], expected_head=GENESIS_HASH, expected_length=0
++    )
++    assert empty.head() == GENESIS_HASH
++    assert append_event(empty)["sequence"] == 1
++
++    with pytest.raises(ValueError) as exc_info:
++        AuditChain.from_records([], expected_head=GENESIS_HASH, expected_length=1)
++    assert str(exc_info.value) == "INVALID_CHAIN:LENGTH_MISMATCH"
++
++    chain = AuditChain()
++    append_event(chain)
++    append_event(chain, "event-2", AT + timedelta(seconds=1))
++    with pytest.raises(ValueError) as exc_info:
++        AuditChain.from_records(
++            chain.records[:1], expected_head=chain.head(), expected_length=2
++        )
++    assert str(exc_info.value) == "INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH"
++
++
++def test_restored_instances_and_their_appends_are_independent():
++    chain = AuditChain()
++    append_event(chain)
++    snapshot = deepcopy(chain.records)
++    anchors = {"expected_head": chain.head(), "expected_length": 1}
++    first = AuditChain.from_records(snapshot, **anchors)
++    second = AuditChain.from_records(snapshot, **anchors)
++
++    first_record = append_event(first, "first-only", AT + timedelta(seconds=1))
++    second_record = append_event(second, "second-only", AT + timedelta(seconds=1))
++
++    assert first_record["sequence"] == second_record["sequence"] == 2
++    assert first_record["previous_hash"] == second_record["previous_hash"] == chain.head()
++    assert first.head() != second.head()
++    assert second.verify(second.records) == []
++    assert len(chain.records) == 1
++
++
+ def test_independent_golden_record_hash():
+     record = AuditChain().append(
+         event_id="evt-golden",
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/audit.py b/trialops/audit.py
+--- a/trialops/audit.py	2026-11-13 20:17:29
++++ b/trialops/audit.py	2026-11-13 20:19:38
+@@ -88,6 +88,32 @@
+ 
+         return self.previous_hash
+ 
++    @classmethod
++    def from_records(
++        cls,
++        records: Any,
++        *,
++        expected_head: str,
++        expected_length: int,
++    ) -> "AuditChain":
++        """Restore an independent chain from a trusted, verified snapshot."""
++
++        snapshot = list(records)
++        errors = cls.verify(
++            snapshot,
++            expected_head=expected_head,
++            expected_length=expected_length,
++        )
++        if errors:
++            raise ValueError("INVALID_CHAIN:" + ",".join(sorted(errors)))
++
++        chain = cls()
++        chain.records = deepcopy(snapshot)
++        chain._event_ids = {record["event_id"] for record in chain.records}
++        if chain.records:
++            chain.previous_hash = chain.records[-1]["hash"]
++        return chain
++
+     def append(
+         self,
+         *,

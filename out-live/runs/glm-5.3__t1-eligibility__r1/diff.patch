@@ -1,0 +1,223 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_eligibility.py b/tests/test_eligibility.py
+--- a/tests/test_eligibility.py	2026-11-13 14:56:26
++++ b/tests/test_eligibility.py	2026-11-14 11:24:20
+@@ -96,6 +96,81 @@
+     assert result["reasons"] == ["CONSENT_VERSION"]
+ 
+ 
++def test_consent_signed_exactly_on_valid_from_is_accepted():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-01-01"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 1, 1))
++
++    assert result == {"eligible": True, "reasons": [], "consent_version": "v2"}
++
++
++def test_consent_signed_after_evaluation_date_is_not_selected():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-16"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++
++def test_wrong_version_alone_returns_the_selected_version():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v9", "signed_on": "2024-06-15"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result == {
++        "eligible": False,
++        "reasons": ["CONSENT_VERSION"],
++        "consent_version": "v9",
++    }
++
++
++def test_age_boundaries_are_inclusive_one_day_outside_fails():
++    protocol = make_protocol()
++    protocol.update(min_age=24, max_age=24, labs={}, exclusions=[])
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-01-01"}]
++
++    at_min_and_max = evaluate_subject(subject, protocol, date(2024, 6, 15))
++    below_min = evaluate_subject(subject, protocol, date(2024, 6, 14))
++    above_max = evaluate_subject(subject, protocol, date(2025, 6, 16))
++
++    assert at_min_and_max == {"eligible": True, "reasons": [], "consent_version": "v2"}
++    assert below_min["reasons"] == ["AGE_BELOW_MIN"]
++    assert above_max["reasons"] == ["AGE_ABOVE_MAX"]
++
++
++def test_lab_boundaries_are_inclusive_and_reasons_sort_by_lab_name():
++    protocol = make_protocol()
++    subject = make_subject()
++    subject["labs"] = {"A": 3, "Z": 10}
++
++    at_low_and_high = evaluate_subject(subject, protocol, date(2024, 6, 15))
++
++    subject["labs"] = {"A": 3.5, "Z": 9}
++    just_outside = evaluate_subject(subject, protocol, date(2024, 6, 15))
++
++    assert at_low_and_high == {"eligible": True, "reasons": [], "consent_version": "v2"}
++    assert just_outside["reasons"] == ["LAB_A_HIGH", "LAB_Z_LOW"]
++
++
++def test_exclusions_match_by_exact_flag_name_only():
++    protocol = make_protocol()
++    protocol.update(labs={})
++    subject = make_subject()
++    subject.update(flags=["prior", "PRIOR ", "DO_NOT_ENROLLX"], labs={})
++
++    result = evaluate_subject(subject, protocol, date(2024, 6, 15))
++
++    assert result == {"eligible": True, "reasons": [], "consent_version": "v2"}
++
++
+ def test_malformed_required_fields_raise_field_naming_value_errors():
+     subject = make_subject()
+     subject["birth_date"] = "not-a-date"
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_scratch_probe.py b/tests/test_scratch_probe.py
+--- a/tests/test_scratch_probe.py	1970-01-01 01:00:00
++++ b/tests/test_scratch_probe.py	2026-11-14 11:23:07
+@@ -0,0 +1,134 @@
++"""Scratch: final targeted edge probes for evaluate_subject."""
++
++from datetime import date
++
++from trialops.eligibility import evaluate_subject
++
++
++def protocol(**overrides):
++    base = {
++        "min_age": 18,
++        "max_age": 30,
++        "required_consent_version": "v2",
++        "consent_valid_from": "2024-01-01",
++        "labs": {},
++        "exclusions": [],
++    }
++    base.update(overrides)
++    return base
++
++
++def subject(**overrides):
++    base = {
++        "birth_date": "2000-06-15",
++        "consents": [{"version": "v2", "signed_on": "2024-06-15"}],
++        "labs": {},
++        "flags": [],
++    }
++    base.update(overrides)
++    return base
++
++
++def show(label, result):
++    print(f"{label}: {result}")
++
++
++def test_edges():
++    # Leap-day birth evaluated across a non-leap year.
++    leap = subject(birth_date="2000-02-29", consents=[])
++    show("2025-02-28", evaluate_subject(leap, protocol(min_age=25, max_age=25), date(2025, 2, 28)))
++    show("2025-03-01", evaluate_subject(leap, protocol(min_age=25, max_age=25), date(2025, 3, 1)))
++    show("2024-02-29", evaluate_subject(leap, protocol(min_age=24, max_age=24), date(2024, 2, 29)))
++
++    # Consent exactly on `on` counts; consent after `on` is ignored.
++    show(
++        "same-day consent",
++        evaluate_subject(
++            subject(consents=[{"version": "v2", "signed_on": "2024-06-15"}]),
++            protocol(),
++            date(2024, 6, 15),
++        ),
++    )
++    show(
++        "future-only consent",
++        evaluate_subject(
++            subject(consents=[{"version": "v2", "signed_on": "2024-06-16"}]),
++            protocol(),
++            date(2024, 6, 15),
++        ),
++    )
++    show(
++        "valid_from == signed_on",
++        evaluate_subject(
++            subject(consents=[{"version": "v2", "signed_on": "2024-01-01"}]),
++            protocol(),
++            date(2024, 6, 15),
++        ),
++    )
++    show(
++        "valid_from day after",
++        evaluate_subject(
++            subject(consents=[{"version": "v2", "signed_on": "2023-12-31"}]),
++            protocol(),
++            date(2024, 6, 15),
++        ),
++    )
++    show(
++        "no consents at all",
++        evaluate_subject(subject(consents=[]), protocol(), date(2024, 6, 15)),
++    )
++
++    # Age boundaries inclusive at both ends.
++    show("age == max", evaluate_subject(subject(), protocol(min_age=18, max_age=24), date(2024, 6, 15)))
++    show("age == min", evaluate_subject(subject(), protocol(min_age=24, max_age=30), date(2024, 6, 15)))
++    show("age == min-1day", evaluate_subject(subject(), protocol(min_age=24, max_age=30), date(2024, 6, 14)))
++    show("age == max+1day", evaluate_subject(subject(), protocol(min_age=18, max_age=23), date(2024, 6, 16)))
++    show("min_age 0, born after on", evaluate_subject(subject(birth_date="2024-06-16"), protocol(min_age=0, max_age=0), date(2024, 6, 15)))
++
++    # Wrong version but still returned.
++    show(
++        "wrong version returned",
++        evaluate_subject(
++            subject(consents=[{"version": "v9", "signed_on": "2024-06-15"}]),
++            protocol(),
++            date(2024, 6, 15),
++        ),
++    )
++
++    # Lab boundaries inclusive.
++    show(
++        "lab low/high exact",
++        evaluate_subject(
++            subject(labs={"A": 1, "B": 5}),
++            protocol(labs={"A": [1, 4], "B": [2, 5]}),
++            date(2024, 6, 15),
++        ),
++    )
++    show(
++        "lab just outside",
++        evaluate_subject(
++            subject(labs={"A": 0.99, "B": 5.01}),
++            protocol(labs={"A": [1, 4], "B": [2, 5]}),
++            date(2024, 6, 15),
++        ),
++    )
++
++    # Exclusions match by exact name only.
++    show(
++        "exclusion exact name",
++        evaluate_subject(
++            subject(flags=["prior", "PRIOR "]),
++            protocol(exclusions=["PRIOR"]),
++            date(2024, 6, 15),
++        ),
++    )
++
++    # Extra subject labs and flags not in the protocol are ignored.
++    show(
++        "extra labs/flags ignored",
++        evaluate_subject(
++            subject(labs={"A": 1, "UNUSED": 999}, flags=["UNKNOWN"]),
++            protocol(labs={"A": [0, 2]}, exclusions=["DO_NOT_ENROLL"]),
++            date(2024, 6, 15),
++        ),
++    )

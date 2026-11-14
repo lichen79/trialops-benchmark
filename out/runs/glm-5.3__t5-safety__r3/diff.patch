@@ -1,0 +1,640 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/scratch_probe.py b/scratch_probe.py
+--- a/scratch_probe.py	1970-01-01 01:00:00
++++ b/scratch_probe.py	2026-11-13 20:54:06
+@@ -0,0 +1,199 @@
++"""Ad-hoc probes for triage_events edge cases (deleted before finishing)."""
++
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
++from random import Random
++
++from trialops.safety import triage_events
++
++NOW = datetime(2024, 6, 1, tzinfo=timezone.utc)
++
++
++def ev(event_id, **changes):
++    value = {
++        "event_id": event_id,
++        "subject_pseudonym": "subject-001",
++        "event_code": "SYNTH-01",
++        "onset": "2024-01-10T10:00:00+02:00",
++        "seriousness": "other",
++        "source": "site-b",
++    }
++    value.update(changes)
++    return value
++
++
++def show(label, fn):
++    try:
++        print(f"{label}: {fn()!r}")
++    except Exception as exc:  # noqa: BLE001
++        print(f"{label}: {type(exc).__name__}: {exc}")
++
++
++# 1. order independence across permutations of a multi-case fixture
++fixture = [
++    ev("R1", onset="2024-01-01T00:00:00Z"),
++    ev("F1", follow_up_of="R1", onset="2023-12-31T23:00:00-02:00", seriousness="fatal"),
++    ev("R2", subject_pseudonym="subject-002", event_code="SYNTH-02",
++       onset="2024-01-01T00:00:00Z"),
++    ev("F2", subject_pseudonym="subject-002", event_code="SYNTH-02",
++       follow_up_of="R2", uncertain=True, source="site-a"),
++]
++def canon(cases):
++    import json
++    return json.dumps(cases, sort_keys=True, separators=(",", ":"))
++
++
++outputs = set()
++for order in permutations(fixture):
++    outputs.add(canon(triage_events(list(order), now=NOW)))
++print("1. order-independent outputs:", len(outputs) == 1)
++for case in triage_events(fixture, now=NOW):
++    print("   ", case)
++
++# 2. branching: two children of one root
++show("2. branch merge", lambda: triage_events(
++    [
++        ev("A"),
++        ev("B", follow_up_of="A", source="site-a"),
++        ev("C", follow_up_of="A", source="site-c", uncertain=True),
++    ],
++    now=NOW,
++))
++
++# 3. cycles of various shapes and orders
++cyclic = [
++    ev("A", follow_up_of="C", onset="2024-01-01T00:00:00Z"),
++    ev("B", follow_up_of="A"),
++    ev("C", follow_up_of="B"),
++]
++codes = set()
++for order in permutations(cyclic):
++    try:
++        triage_events(list(order), now=NOW)
++        codes.add("NO-ERROR")
++    except ValueError as exc:
++        codes.add(str(exc))
++print("3. 3-cycle codes:", codes)
++show("3b. self cycle", lambda: triage_events(
++    [ev("A", follow_up_of="A")], now=NOW
++))
++show("3c. chain into cycle", lambda: triage_events(
++    [ev("Z", follow_up_of="A"), ev("A", follow_up_of="B"), ev("B", follow_up_of="A")],
++    now=NOW,
++))
++
++# 4. mixed subject vs mixed code, deep chain
++show("4a. mixed subject", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A", subject_pseudonym="subject-002")], now=NOW
++))
++show("4b. mixed code", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A", event_code="SYNTH-02"),
++     ev("C", follow_up_of="B", event_code="SYNTH-03")],
++    now=NOW,
++))
++
++# 5. seriousness precedence and deadlines
++for level in ("other", "hospitalization", "life_threatening", "fatal"):
++    case = triage_events(
++        [ev("A", seriousness=level, onset="2024-01-01T00:00:00Z")], now=NOW
++    )[0]
++    print(f"5. {level}: report_by={case['report_by']} overdue={case['overdue']}")
++
++show("5b. precedence across chain", lambda: triage_events(
++    [
++        ev("A", seriousness="hospitalization", onset="2024-01-01T00:00:00Z"),
++        ev("B", follow_up_of="A", seriousness="other", onset="2024-01-05T00:00:00Z"),
++        ev("C", follow_up_of="B", seriousness="life_threatening",
++           onset="2024-01-03T00:00:00Z"),
++    ],
++    now=NOW,
++))
++
++# 6. overdue boundaries: exactly at, one microsecond past, before
++base = [ev("A", seriousness="hospitalization", onset="2024-01-01T00:00:00Z")]
++report_by = datetime(2024, 1, 16, tzinfo=timezone.utc)
++for label, now in (
++    ("at", report_by),
++    ("after", report_by + timedelta(microseconds=1)),
++    ("before", report_by - timedelta(microseconds=1)),
++    ("zone-offset equal", datetime(2024, 1, 16, 2, 0, tzinfo=timezone(timedelta(hours=2)))),
++):
++    print(f"6. overdue {label}:", triage_events(base, now=now)[0]["overdue"])
++
++# 7. unknown seriousness variants
++for bad in ("severe", "FATAL", None, 3, "", " fatal "):
++    show(f"7. seriousness={bad!r}", lambda bad=bad: triage_events(
++        [ev("A", seriousness=bad)], now=NOW
++    ))
++
++# 8. invalid links / timestamps
++show("8a. empty parent", lambda: triage_events(
++    [ev("A", follow_up_of="")], now=NOW
++))
++show("8b. int parent", lambda: triage_events(
++    [ev("A", follow_up_of=7)], now=NOW
++))
++show("8c. deep missing root", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A"), ev("C", follow_up_of="nope")], now=NOW
++))
++show("8d. naive onset", lambda: triage_events(
++    [ev("A", onset="2024-01-01T00:00:00")], now=NOW
++))
++show("8e. bad onset", lambda: triage_events(
++    [ev("A", onset="not-a-date")], now=NOW
++))
++show("8f. datetime onset aware", lambda: triage_events(
++    [ev("A", onset=datetime(2024, 1, 1, tzinfo=timezone.utc))], now=NOW
++))
++show("8g. naive now", lambda: triage_events([ev("A")], now=datetime(2024, 1, 1)))
++show("8h. non-iterable events", lambda: triage_events(42, now=NOW))
++show("8i. non-mapping event", lambda: triage_events(["oops"], now=NOW))
++
++# 9. uncertainty handling
++show("9a. uncertain None", lambda: triage_events(
++    [ev("A", uncertain=None)], now=NOW
++))
++show("9b. uncertain 1", lambda: triage_events(
++    [ev("A", uncertain=1)], now=NOW
++))
++show("9c. uncertain yes", lambda: triage_events(
++    [ev("A", uncertain="yes")], now=NOW
++))
++show("9d. uncertain spread", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A", uncertain=True)], now=NOW
++))
++
++# 10. overflow near datetime max
++show("10a. report_by overflow", lambda: triage_events(
++    [ev("A", onset="9999-12-31T23:59:59+00:00", seriousness="fatal")], now=NOW
++))
++show("10b. onset overflow date", lambda: triage_events(
++    [ev("A", onset="10000-01-01T00:00:00Z")], now=NOW
++))
++
++# 11. microseconds preserved, offsets normalized
++show("11. micros", lambda: triage_events(
++    [ev("A", onset="2024-01-01T00:00:00.500000+05:30")], now=NOW
++))
++
++# 12. duplicate id where the second copy is malformed
++show("12a. dup then malformed", lambda: triage_events(
++    [ev("A"), ev("A", seriousness="nope")], now=NOW
++))
++show("12b. malformed then dup", lambda: triage_events(
++    [ev("A", seriousness="nope"), ev("A")], now=NOW
++))
++
++# 13. empty input
++show("13. empty", lambda: triage_events([], now=NOW))
++
++# 14. long chain + random shuffle stability
++long_chain = [ev(f"E{i}", follow_up_of=f"E{i-1}" if i else None,
++                 onset=f"2024-01-{10 - i:02d}T00:00:00Z") for i in range(9)]
++first = triage_events(long_chain, now=NOW)
++rng = Random(7)
++stable = all(
++    triage_events(rng.sample(long_chain, len(long_chain)), now=NOW) == first
++    for _ in range(20)
++)
++print("14. long chain shuffle stable:", stable, first[0]["event_ids"], first[0]["onset"])
+diff -ruN -x __pycache__ -x .pytest_cache a/scratch_probe2.py b/scratch_probe2.py
+--- a/scratch_probe2.py	1970-01-01 01:00:00
++++ b/scratch_probe2.py	2026-11-13 20:54:54
+@@ -0,0 +1,79 @@
++"""More probes: extreme offsets, unicode, and error-message stability."""
++
++from datetime import datetime, timedelta, timezone
++
++from trialops.safety import triage_events
++
++NOW = datetime(2024, 6, 1, tzinfo=timezone.utc)
++
++
++def ev(event_id, **changes):
++    value = {
++        "event_id": event_id,
++        "subject_pseudonym": "subject-001",
++        "event_code": "SYNTH-01",
++        "onset": "2024-01-10T10:00:00+02:00",
++        "seriousness": "other",
++        "source": "site-b",
++    }
++    value.update(changes)
++    return value
++
++
++def show(label, fn):
++    try:
++        print(f"{label}: {fn()!r}")
++    except Exception as exc:  # noqa: BLE001
++        print(f"{label}: {type(exc).__name__}: {exc}")
++
++
++# extreme offsets near datetime bounds
++show("a. near-max offset overflow", lambda: triage_events(
++    [ev("A", onset="9999-12-31T23:59:59-05:00")], now=NOW
++))
++show("b. near-min offset overflow", lambda: triage_events(
++    [ev("A", onset="0001-01-01T00:00:00+05:00")], now=NOW
++))
++show("c. min onset ok", lambda: triage_events(
++    [ev("A", onset="0001-01-01T00:00:00+00:00")], now=NOW
++))
++# lowercase z / space separator / fractional seconds
++show("d. lowercase z", lambda: triage_events(
++    [ev("A", onset="2024-01-10T10:00:00z")], now=NOW
++))
++show("e. space separator", lambda: triage_events(
++    [ev("A", onset="2024-01-10 10:00:00+02:00")], now=NOW
++))
++# unicode identifiers and sources
++show("f. unicode ids", lambda: triage_events(
++    [ev("É-2", follow_up_of="É-1"), ev("É-1", source="sïte-ünïcode")], now=NOW
++))
++# error messages must not leak identifiers
++show("g. missing root message", lambda: triage_events(
++    [ev("secret-id-1", follow_up_of="secret-id-2")], now=NOW
++))
++# now with unusual tzinfo
++show("h. now in +05:45", lambda: triage_events(
++    [ev("A", onset="2024-01-01T00:00:00Z", seriousness="fatal")],
++    now=datetime(2024, 1, 8, 5, 45, tzinfo=timezone(timedelta(hours=5, minutes=45))),
++))
++show("i. now exactly onset+7 in non-utc zone", lambda: triage_events(
++    [ev("A", onset="2024-01-01T00:00:00Z", seriousness="fatal")],
++    now=datetime(2024, 1, 8, 6, 0, tzinfo=timezone(timedelta(hours=6))),
++)[0]["overdue"])
++# generator input and tuple input
++show("j. generator input", lambda: triage_events(
++    (ev("A") for _ in range(1)), now=NOW
++))
++show("k. tuple of events", lambda: triage_events(
++    (ev("A"), ev("B", follow_up_of="A")), now=NOW
++))
++# duplicate root id appearing in two separate chains
++show("l. same id in two chains", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A"), ev("A", source="site-z")], now=NOW
++))
++# mixed-case where root itself differs but grandchildren match root
++show("m. mixed mid-chain", lambda: triage_events(
++    [ev("A"), ev("B", follow_up_of="A", subject_pseudonym="subject-002"),
++     ev("C", follow_up_of="B", subject_pseudonym="subject-001")], now=NOW
++))
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-13 20:56:47
+@@ -1,5 +1,6 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+@@ -98,3 +99,342 @@
+             [event("A", onset="2024-01-01T00:00:00")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
++
++
++def test_long_chain_and_branching_followups_merge_into_one_case():
++    events = [
++        event("G", follow_up_of="F", onset="2024-01-12T00:00:00Z", source="site-c"),
++        event("F", follow_up_of="R", onset="2024-01-11T00:00:00Z", source="site-c"),
++        event("B", follow_up_of="R", onset="2024-01-09T00:00:00Z", source="site-a"),
++        event("R", onset="2024-01-10T00:00:00Z", source="site-b"),
++    ]
++    now = datetime(2024, 2, 1, tzinfo=timezone.utc)
++
++    [case] = triage_events(events, now=now)
++
++    assert case["case_id"] == "R"
++    assert case["event_ids"] == ["B", "F", "G", "R"]
++    # Every source identifier survives the merge, de-duplicated and sorted.
++    assert case["sources"] == ["site-a", "site-b", "site-c"]
++    assert case["onset"] == "2024-01-09T00:00:00Z"
++
++
++def test_offset_normalization_uses_earliest_instant_in_utc():
++    events = [
++        event("R", onset="2024-01-01T03:00:00+02:00"),
++        event("F1", follow_up_of="R", onset="2024-01-01T02:00:00+02:00"),
++        # 2023-12-31T21:30:00-05:00 is 2024-01-01T02:30:00Z: the earliest
++        # instant, even though its local wall clock reads the latest date.
++        event("F2", follow_up_of="F1", onset="2023-12-31T21:30:00-05:00"),
++    ]
++    now = datetime(2024, 12, 1, tzinfo=timezone.utc)
++
++    [case] = triage_events(events, now=now)
++
++    assert case["onset"] == "2024-01-01T01:00:00Z"
++    assert case["event_ids"] == ["F1", "F2", "R"]
++    assert case["report_by"] == "2024-01-31T01:00:00Z"
++
++
++def test_deadline_uses_earliest_onset_not_followup_arrival_time():
++    events = [
++        event("R", onset="2024-01-01T00:00:00Z", seriousness="other"),
++        # A later follow-up escalates seriousness but must not restart the clock.
++        event(
++            "F1",
++            follow_up_of="R",
++            onset="2024-01-20T00:00:00Z",
++            seriousness="hospitalization",
++        ),
++    ]
++    now = datetime(2024, 1, 16, tzinfo=timezone.utc)
++
++    [case] = triage_events(events, now=now)
++
++    assert case["seriousness"] == "hospitalization"
++    assert case["onset"] == "2024-01-01T00:00:00Z"
++    assert case["report_by"] == "2024-01-16T00:00:00Z"
++    assert case["overdue"] is False
++
++
++def test_duplicate_roots_are_rejected_regardless_of_role():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    with pytest.raises(ValueError, match="DUPLICATE_EVENT_ID"):
++        triage_events([event("E1"), event("E1")], now=now)
++    # The same identifier claimed twice, once as a root and once as a follow-up.
++    with pytest.raises(ValueError, match="DUPLICATE_EVENT_ID"):
++        triage_events(
++            [
++                event("E1"),
++                event("E2", follow_up_of="E3"),
++                event("E1", follow_up_of="E2"),
++            ],
++            now=now,
++        )
++
++
++def test_cycle_shapes_are_rejected_in_any_input_order():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++
++    with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++        triage_events([event("A", follow_up_of="A")], now=now)
++
++    three_cycle = [
++        event("A", follow_up_of="C"),
++        event("B", follow_up_of="A"),
++        event("C", follow_up_of="B"),
++    ]
++    for shuffled in ([three_cycle, list(reversed(three_cycle))]):
++        with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++            triage_events(shuffled, now=now)
++
++
++def test_chain_leading_into_a_cycle_is_rejected():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    events = [
++        event("Z", follow_up_of="Y"),
++        event("Y", follow_up_of="B"),
++        event("A", follow_up_of="B"),
++        event("B", follow_up_of="A"),
++    ]
++
++    for order in (events, list(reversed(events))):
++        with pytest.raises(ValueError, match="FOLLOW_UP_CYCLE"):
++            triage_events(order, now=now)
++
++
++@pytest.mark.parametrize(
++    "changes",
++    [
++        {"event_code": "SYNTH-02"},
++        {"subject_pseudonym": "subject-002"},
++        {"event_code": "SYNTH-02", "subject_pseudonym": "subject-002"},
++    ],
++)
++def test_mixed_codes_and_subjects_are_rejected_across_a_chain(changes):
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    events = [
++        event("R"),
++        event("M", follow_up_of="R", **changes),
++        event("T", follow_up_of="M"),
++    ]
++
++    for order in (events, list(reversed(events))):
++        with pytest.raises(ValueError, match="MIXED_CASE"):
++            triage_events(order, now=now)
++
++
++@pytest.mark.parametrize(
++    ("expected", "days"),
++    [
++        ("other", 30),
++        ("hospitalization", 15),
++        ("life_threatening", 7),
++        ("fatal", 7),
++    ],
++)
++def test_deadline_days_match_the_case_seriousness(expected, days):
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++
++    [case] = triage_events(
++        [event("A", onset="2024-01-01T00:00:00Z", seriousness=expected)], now=now
++    )
++
++    assert case["report_by"] == f"2024-01-{1 + days:02d}T00:00:00Z"
++
++
++@pytest.mark.parametrize(
++    ("expected", "levels"),
++    [
++        ("other", ["other"]),
++        ("hospitalization", ["other", "hospitalization"]),
++        ("life_threatening", ["hospitalization", "life_threatening", "other"]),
++        ("fatal", ["other", "life_threatening", "hospitalization", "fatal"]),
++        ("fatal", ["fatal", "other"]),
++    ],
++)
++def test_seriousness_precedence_and_deadline_days(expected, levels):
++    onset = "2024-01-01T00:00:00Z"
++    events = [event("R", onset=onset, seriousness=levels[0])]
++    for index, seriousness in enumerate(levels[1:], start=1):
++        events.append(
++            event(
++                f"F{index}",
++                follow_up_of="R",
++                onset=onset,
++                seriousness=seriousness,
++            )
++        )
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++
++    [case] = triage_events(events, now=now)
++
++    assert case["case_id"] == "R"
++    assert case["seriousness"] == expected
++    days = {"other": 30, "hospitalization": 15, "life_threatening": 7, "fatal": 7}[
++        expected
++    ]
++    assert case["report_by"] == f"2024-01-{1 + days:02d}T00:00:00Z"
++
++
++@pytest.mark.parametrize("seriousness", ["severe", "FATAL", "", None, 7, " other"])
++def test_unknown_seriousness_raises_a_stable_code(seriousness):
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    with pytest.raises(ValueError, match="INVALID_SERIOUSNESS"):
++        triage_events(
++            [event("A", seriousness=seriousness)], now=now
++        )
++
++
++@pytest.mark.parametrize(
++    "link", ["absent", "   ", 7, ["R"], {"R": None}]
++)
++def test_invalid_event_links_raise_stable_codes(link):
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++
++    if isinstance(link, str) and not link.strip():
++        # Blank links are malformed links, not missing roots.
++        with pytest.raises(ValueError, match="INVALID_FOLLOW_UP_OF"):
++            triage_events([event("A", follow_up_of=link)], now=now)
++    else:
++        with pytest.raises(ValueError, match="MISSING_ROOT|INVALID_FOLLOW_UP_OF"):
++            triage_events([event("A", follow_up_of=link)], now=now)
++
++
++def test_missing_roots_are_detected_deep_in_a_chain():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    events = [
++        event("R"),
++        event("F1", follow_up_of="R"),
++        event("F2", follow_up_of="F1", onset="2024-01-02T00:00:00Z"),
++        event("F3", follow_up_of="not-present"),
++    ]
++
++    for order in (events, list(reversed(events))):
++        with pytest.raises(ValueError, match="MISSING_ROOT"):
++            triage_events(order, now=now)
++
++
++def test_overdue_is_strictly_before_now_and_offset_insensitive():
++    events = [event("A", onset="2024-01-01T00:00:00Z", seriousness="hospitalization")]
++    report_by = datetime(2024, 1, 16, tzinfo=timezone.utc)
++
++    cases = triage_events(events, now=report_by)
++    assert cases[0]["report_by"] == "2024-01-16T00:00:00Z"
++    assert cases[0]["overdue"] is False
++
++    assert triage_events(events, now=report_by + timedelta(microseconds=1))[0][
++        "overdue"
++    ] is True
++    assert triage_events(events, now=report_by - timedelta(microseconds=1))[0][
++        "overdue"
++    ] is False
++
++    # A non-UTC clock reading the same instant is still exactly on time.
++    same_instant = report_by.astimezone(timezone(timedelta(hours=5, minutes=45)))
++    assert triage_events(events, now=same_instant)[0]["overdue"] is False
++
++
++@pytest.mark.parametrize("days", [7, 15, 30])
++def test_overdue_boundary_is_independent_of_deadline_length(days):
++    events = [event("A", onset="2024-01-01T00:00:00Z", seriousness="other")]
++    if days == 7:
++        events[0]["seriousness"] = "fatal"
++    elif days == 15:
++        events[0]["seriousness"] = "hospitalization"
++
++    report_by = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=days)
++
++    assert triage_events(events, now=report_by)[0]["overdue"] is False
++    assert triage_events(events, now=report_by + timedelta(days=1))[0]["overdue"] is True
++    assert triage_events(events, now=report_by - timedelta(days=1))[0]["overdue"] is False
++
++
++def test_input_order_never_changes_the_output():
++    events = [
++        event("R1", onset="2024-01-05T00:00:00Z", seriousness="hospitalization"),
++        event("R1A", follow_up_of="R1", onset="2024-01-04T00:00:00Z",
++              seriousness="fatal", source="site-a", uncertain=True),
++        event("R2", subject_pseudonym="subject-002", event_code="SYNTH-02",
++              onset="2024-01-04T00:00:00Z"),
++        event("R2A", subject_pseudonym="subject-002", event_code="SYNTH-02",
++              follow_up_of="R2", onset="2024-01-06T00:00:00Z", source="site-a"),
++        event("R3", onset="2024-01-04T00:00:00Z"),
++    ]
++    now = datetime(2024, 2, 1, tzinfo=timezone.utc)
++
++    # All three cases share the earliest onset, so case_id breaks the tie.
++    expected = [
++        {
++            "case_id": "R1",
++            "subject_pseudonym": "subject-001",
++            "event_code": "SYNTH-01",
++            "onset": "2024-01-04T00:00:00Z",
++            "seriousness": "fatal",
++            "report_by": "2024-01-11T00:00:00Z",
++            "sources": ["site-a", "site-b"],
++            "event_ids": ["R1", "R1A"],
++            "uncertain": True,
++            "overdue": True,
++        },
++        {
++            "case_id": "R2",
++            "subject_pseudonym": "subject-002",
++            "event_code": "SYNTH-02",
++            "onset": "2024-01-04T00:00:00Z",
++            "seriousness": "other",
++            "report_by": "2024-02-03T00:00:00Z",
++            "sources": ["site-a", "site-b"],
++            "event_ids": ["R2", "R2A"],
++            "uncertain": False,
++            "overdue": False,
++        },
++        {
++            "case_id": "R3",
++            "subject_pseudonym": "subject-001",
++            "event_code": "SYNTH-01",
++            "onset": "2024-01-04T00:00:00Z",
++            "seriousness": "other",
++            "report_by": "2024-02-03T00:00:00Z",
++            "sources": ["site-b"],
++            "event_ids": ["R3"],
++            "uncertain": False,
++            "overdue": False,
++        },
++    ]
++
++    assert triage_events(events, now=now) == expected
++    for permutation in permutations(events):
++        shuffled = list(permutation)
++        assert triage_events(shuffled, now=now) == expected
++
++
++def test_uncertainty_is_preserved_from_any_member_of_a_chain():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    assert triage_events([event("A")], now=now)[0]["uncertain"] is False
++    assert triage_events(
++        [
++            event("A", uncertain=True),
++            event("B", follow_up_of="A"),
++            event("C", follow_up_of="B"),
++        ],
++        now=now,
++    )[0]["uncertain"] is True
++    assert triage_events(
++        [
++            event("A"),
++            event("B", follow_up_of="A", uncertain=False),
++            event("C", follow_up_of="B", uncertain=True),
++        ],
++        now=now,
++    )[0]["uncertain"] is True
++
++
++def test_report_by_overflow_raises_a_stable_code():
++    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
++    with pytest.raises(ValueError, match="REPORT_BY_OUT_OF_RANGE"):
++        triage_events(
++            [event("A", onset="9999-12-31T23:59:59+00:00", seriousness="fatal")],
++            now=now,
++        )
++

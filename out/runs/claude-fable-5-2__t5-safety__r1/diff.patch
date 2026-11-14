@@ -1,0 +1,260 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_safety.py b/tests/test_safety.py
+--- a/tests/test_safety.py	2026-11-13 14:53:37
++++ b/tests/test_safety.py	2026-11-13 20:39:32
+@@ -1,11 +1,14 @@
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from itertools import permutations
+ 
+ import pytest
+ 
+ from trialops.safety import triage_events
+ 
++NOW = datetime(2024, 1, 1, tzinfo=timezone.utc)
+ 
++
+ def event(event_id, **changes):
+     value = {
+         "event_id": event_id,
+@@ -98,3 +101,240 @@
+             [event("A", onset="2024-01-01T00:00:00")],
+             now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+         )
++
++
++def test_no_events_yield_no_cases():
++    assert triage_events([], now=NOW) == []
++
++
++def test_input_order_does_not_affect_output():
++    events = [
++        event("E1"),  # 08:00Z
++        event(
++            "E2",
++            follow_up_of="E1",
++            onset="2024-01-10T07:00:00Z",
++            seriousness="hospitalization",
++            source="site-a",
++        ),
++        event("E3", follow_up_of="E2", onset="2024-01-12T00:00:00Z", uncertain=True),
++        event(
++            "F1",
++            subject_pseudonym="subject-002",
++            onset="2024-01-10T08:00:00Z",
++            source="site-c",
++        ),
++        event(
++            "F2",
++            follow_up_of="F1",
++            subject_pseudonym="subject-002",
++            onset="2024-01-10T09:00:00+01:00",
++            seriousness="life_threatening",
++            source="site-c",
++        ),
++    ]
++    expected = [
++        {
++            "case_id": "E1",
++            "subject_pseudonym": "subject-001",
++            "event_code": "SYNTH-01",
++            "onset": "2024-01-10T07:00:00Z",
++            "seriousness": "hospitalization",
++            "report_by": "2024-01-25T07:00:00Z",
++            "sources": ["site-a", "site-b"],
++            "event_ids": ["E1", "E2", "E3"],
++            "uncertain": True,
++            "overdue": False,
++        },
++        {
++            "case_id": "F1",
++            "subject_pseudonym": "subject-002",
++            "event_code": "SYNTH-01",
++            "onset": "2024-01-10T08:00:00Z",
++            "seriousness": "life_threatening",
++            "report_by": "2024-01-17T08:00:00Z",
++            "sources": ["site-c"],
++            "event_ids": ["F1", "F2"],
++            "uncertain": False,
++            "overdue": True,
++        },
++    ]
++    now = datetime(2024, 1, 20, tzinfo=timezone.utc)
++
++    for ordering in permutations(events):
++        assert triage_events(ordering, now=now) == expected
++
++
++@pytest.mark.parametrize(
++    ("levels", "expected", "days"),
++    [
++        (["other"], "other", 30),
++        (["hospitalization"], "hospitalization", 15),
++        (["life_threatening"], "life_threatening", 7),
++        (["fatal"], "fatal", 7),
++        (["other", "hospitalization"], "hospitalization", 15),
++        (["hospitalization", "life_threatening", "other"], "life_threatening", 7),
++        (["life_threatening", "fatal", "hospitalization", "other"], "fatal", 7),
++    ],
++)
++def test_seriousness_precedence_sets_deadline_with_strict_overdue_boundary(
++    levels, expected, days
++):
++    onset = datetime(2024, 3, 1, 12, 0, tzinfo=timezone.utc)
++    # Follow-ups carry later onsets: the clock must stay on the earliest one.
++    events = [event("E0", onset="2024-03-01T12:00:00Z", seriousness=levels[0])]
++    events += [
++        event(
++            f"E{index}",
++            follow_up_of=f"E{index - 1}",
++            onset="2024-03-05T12:00:00Z",
++            seriousness=level,
++        )
++        for index, level in enumerate(levels[1:], start=1)
++    ]
++    report_by = onset + timedelta(days=days)
++    tick = timedelta(microseconds=1)
++
++    for ordering in (events, events[::-1]):
++        [case] = triage_events(ordering, now=report_by)
++        assert case["seriousness"] == expected
++        assert case["onset"] == "2024-03-01T12:00:00Z"
++        assert case["report_by"] == report_by.isoformat().replace("+00:00", "Z")
++        assert case["overdue"] is False
++
++    assert triage_events(events, now=report_by - tick)[0]["overdue"] is False
++    assert triage_events(events, now=report_by + tick)[0]["overdue"] is True
++
++
++def test_now_in_another_offset_is_compared_as_an_instant():
++    tokyo = timezone(timedelta(hours=9))
++    events = [event("E1", seriousness="fatal")]  # report_by 2024-01-17T08:00:00Z
++
++    [on_time] = triage_events(events, now=datetime(2024, 1, 17, 17, 0, tzinfo=tokyo))
++    [late] = triage_events(events, now=datetime(2024, 1, 17, 17, 0, 1, tzinfo=tokyo))
++
++    assert on_time["report_by"] == "2024-01-17T08:00:00Z"
++    assert on_time["overdue"] is False
++    assert late["overdue"] is True
++
++
++def test_duplicate_root_is_rejected_in_any_order():
++    events = [
++        event("E1"),
++        event("E2", follow_up_of="E1"),
++        event("E1", source="site-z"),
++    ]
++
++    for ordering in permutations(events):
++        with pytest.raises(ValueError) as excinfo:
++            triage_events(ordering, now=NOW)
++        assert str(excinfo.value) == "DUPLICATE_EVENT_ID"
++
++
++def test_unlinked_roots_with_matching_fields_are_not_merged():
++    cases = triage_events(
++        [event("E2", source="site-a"), event("E1", uncertain=True)], now=NOW
++    )
++
++    assert [case["case_id"] for case in cases] == ["E1", "E2"]
++    assert [case["event_ids"] for case in cases] == [["E1"], ["E2"]]
++    assert [case["sources"] for case in cases] == [["site-b"], ["site-a"]]
++    assert [case["uncertain"] for case in cases] == [True, False]
++
++
++@pytest.mark.parametrize(
++    "events",
++    [
++        [event("A", follow_up_of="A")],
++        [
++            event("A", follow_up_of="C"),
++            event("B", follow_up_of="A"),
++            event("C", follow_up_of="B"),
++            event("D", follow_up_of="A"),
++            event("R"),
++        ],
++    ],
++    ids=["self-link", "three-cycle-with-tail"],
++)
++def test_cycles_are_rejected_in_any_order(events):
++    for ordering in permutations(events):
++        with pytest.raises(ValueError) as excinfo:
++            triage_events(ordering, now=NOW)
++        assert str(excinfo.value) == "FOLLOW_UP_CYCLE"
++
++
++@pytest.mark.parametrize(
++    "events",
++    [
++        [
++            event("A"),
++            event("B", follow_up_of="A"),
++            event("C", follow_up_of="B", event_code="SYNTH-02"),
++        ],
++        [
++            event("A"),
++            event("B", follow_up_of="A", event_code="SYNTH-02"),
++            event("C", follow_up_of="B"),
++        ],
++        [
++            event("A"),
++            event("B", follow_up_of="A"),
++            event("C", follow_up_of="B", subject_pseudonym="subject-002"),
++        ],
++        [
++            event("A"),
++            event("B", follow_up_of="A", event_code="synth-01"),
++        ],
++    ],
++    ids=["leaf-code", "middle-code", "leaf-subject", "case-differs"],
++)
++def test_mixed_chains_are_rejected_in_any_order(events):
++    for ordering in permutations(events):
++        with pytest.raises(ValueError) as excinfo:
++            triage_events(ordering, now=NOW)
++        assert str(excinfo.value) == "MIXED_CASE"
++
++
++@pytest.mark.parametrize(
++    ("changes", "code"),
++    [
++        ({"seriousness": "severe"}, "INVALID_SERIOUSNESS"),
++        ({"seriousness": "FATAL"}, "INVALID_SERIOUSNESS"),
++        ({"seriousness": None}, "INVALID_SERIOUSNESS"),
++        ({"seriousness": ["fatal"]}, "INVALID_SERIOUSNESS"),
++        ({"onset": "2024-01-01T00:00:00"}, "INVALID_ONSET"),
++        ({"onset": "2024-01-01"}, "INVALID_ONSET"),
++        ({"onset": "not-a-date"}, "INVALID_ONSET"),
++        ({"onset": None}, "INVALID_ONSET"),
++        ({"onset": datetime(2024, 1, 1, tzinfo=timezone.utc)}, "INVALID_ONSET"),
++        ({"follow_up_of": "absent"}, "MISSING_ROOT"),
++        ({"follow_up_of": ""}, "INVALID_FOLLOW_UP_OF"),
++        ({"follow_up_of": 7}, "INVALID_FOLLOW_UP_OF"),
++        ({"uncertain": "yes"}, "INVALID_UNCERTAIN"),
++        ({"source": ""}, "INVALID_SOURCE"),
++        ({"event_id": None}, "INVALID_EVENT_ID"),
++    ],
++)
++def test_invalid_events_raise_stable_codes(changes, code):
++    invalid = event("E2")
++    invalid.update(changes)
++
++    with pytest.raises(ValueError) as excinfo:
++        triage_events([event("E1"), invalid], now=NOW)
++    assert str(excinfo.value) == code
++
++
++def test_missing_seriousness_is_rejected():
++    incomplete = event("E1")
++    del incomplete["seriousness"]
++
++    with pytest.raises(ValueError) as excinfo:
++        triage_events([incomplete], now=NOW)
++    assert str(excinfo.value) == "INVALID_SERIOUSNESS"
++
++
++@pytest.mark.parametrize("now", [datetime(2024, 1, 1), "2024-01-01T00:00:00Z", None])
++def test_now_must_be_an_aware_datetime(now):
++    with pytest.raises(ValueError) as excinfo:
++        triage_events([event("E1")], now=now)
++    assert str(excinfo.value) == "INVALID_NOW"

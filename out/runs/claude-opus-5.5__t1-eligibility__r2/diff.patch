@@ -1,0 +1,120 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_eligibility.py b/tests/test_eligibility.py
+--- a/tests/test_eligibility.py	2026-11-13 14:56:26
++++ b/tests/test_eligibility.py	2026-11-13 20:35:13
+@@ -96,6 +96,116 @@
+     assert result["reasons"] == ["CONSENT_VERSION"]
+ 
+ 
++def test_consent_signed_after_evaluation_date_is_ignored():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-16"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result == {
++        "eligible": False,
++        "reasons": ["CONSENT_MISSING"],
++        "consent_version": None,
++    }
++
++
++def test_correct_version_signed_before_valid_from_is_missing_not_version():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2023-12-31"}]
++
++    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    assert result["reasons"] == ["CONSENT_MISSING"]
++    assert result["consent_version"] == "v2"
++
++
++def test_consent_signed_exactly_on_valid_from_is_accepted():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-01-01"}]
++
++    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15))["eligible"]
++
++
++def test_age_and_lab_just_outside_inclusive_boundaries():
++    protocol = make_protocol()
++    subject = make_subject()
++    subject["birth_date"] = "2006-06-16"  # turns 18 the day after evaluation
++    subject["labs"] = {"A": 3.0001, "Z": 9.999}
++
++    result = evaluate_subject(subject, protocol, date(2024, 6, 15))
++    assert result["reasons"] == ["AGE_BELOW_MIN", "LAB_A_HIGH", "LAB_Z_LOW"]
++
++    subject["birth_date"] = "1993-06-15"  # 31 on the evaluation date
++    subject["labs"] = {"A": 3, "Z": 10}
++    result = evaluate_subject(subject, protocol, date(2024, 6, 15))
++    assert result["reasons"] == ["AGE_ABOVE_MAX"]
++
++    subject["birth_date"] = "1993-06-16"  # still 30 on the evaluation date
++    assert evaluate_subject(subject, protocol, date(2024, 6, 15))["eligible"]
++
++
++def test_leap_day_birthday_in_non_leap_year():
++    protocol = make_protocol()
++    protocol.update(min_age=23, max_age=23, labs={}, exclusions=[])
++    subject = make_subject()
++    subject.update(
++        birth_date="2000-02-29",
++        consents=[{"version": "v2", "signed_on": "2024-01-01"}],
++        labs={},
++    )
++    # 2023 is not a leap year: still 22 on Feb 28, 23 on Mar 1.
++    protocol["consent_valid_from"] = "2023-01-01"
++    subject["consents"] = [{"version": "v2", "signed_on": "2023-01-01"}]
++    assert evaluate_subject(subject, protocol, date(2023, 2, 28))["reasons"] == [
++        "AGE_BELOW_MIN"
++    ]
++    assert evaluate_subject(subject, protocol, date(2023, 3, 1))["eligible"]
++
++
++def test_unlisted_flags_do_not_exclude():
++    subject = make_subject()
++    subject["flags"] = ["SOMETHING_ELSE", "prior"]
++
++    assert evaluate_subject(subject, make_protocol(), date(2024, 6, 15))["eligible"]
++
++
++@pytest.mark.parametrize(
++    "field",
++    ["min_age", "max_age", "required_consent_version", "consent_valid_from",
++     "labs", "exclusions"],
++)
++def test_missing_protocol_fields_raise_value_error_naming_field(field):
++    protocol = make_protocol()
++    del protocol[field]
++    with pytest.raises(ValueError, match=field):
++        evaluate_subject(make_subject(), protocol, date(2024, 6, 15))
++
++
++@pytest.mark.parametrize("field", ["birth_date", "consents", "labs", "flags"])
++def test_missing_subject_fields_raise_value_error_naming_field(field):
++    subject = make_subject()
++    del subject[field]
++    with pytest.raises(ValueError, match=field):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++
++def test_malformed_consent_and_lab_values_raise_value_error():
++    subject = make_subject()
++    subject["consents"] = [{"version": "v2", "signed_on": "2024-06-15T10:00:00"}]
++    with pytest.raises(ValueError, match="signed_on"):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    subject = make_subject()
++    subject["consents"] = [{"signed_on": "2024-06-15"}]
++    with pytest.raises(ValueError, match="version"):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++    subject = make_subject()
++    subject["labs"]["A"] = "2"
++    with pytest.raises(ValueError, match="labs.A"):
++        evaluate_subject(subject, make_protocol(), date(2024, 6, 15))
++
++
+ def test_malformed_required_fields_raise_field_naming_value_errors():
+     subject = make_subject()
+     subject["birth_date"] = "not-a-date"

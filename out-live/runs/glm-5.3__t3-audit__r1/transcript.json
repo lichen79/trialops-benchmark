@@ -1,0 +1,480 @@
+[
+ {
+  "call": 1,
+  "t": 0.51,
+  "content": "I'll start by exploring the repository structure.",
+  "tool_calls": [
+   {
+    "id": "call_786125426c6d5751ae7185832e53e967",
+    "name": "list_files",
+    "arguments": "{\"path\":\".\"}"
+   }
+  ],
+  "usage": {
+   "input": 1114,
+   "output": 21,
+   "reasoning": 0,
+   "cache_read": 1112,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 1.11,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_fb06928e1d3350d598ff3f6ee393e798",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/audit.py\"}"
+   },
+   {
+    "id": "call_985a816b5dc750258b8163b1c23729ff",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 1234,
+   "output": 29,
+   "reasoning": 0,
+   "cache_read": 1112,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"A small tamper-evident chain for synthetic operational events.\"\"\"\n\nfrom copy import deepcopy\nfrom datetime import datetime, timezone\nimport hashlib\nimport json\nimport re\nfrom typing import Any\n\nGENESIS_HASH = \"0\" * 64\n\n_HASH_PATTERN = re.compile(r\"[0-9a-f]{64}\\Z\")\n_TIMESTAMP_PATTERN = re.compile(\n    r\"([0-9]{4})-([0-9]{2})-([0-9]{2})T\"\n    r\"([0-9]{2}):([0-9]{2}):([0-9]{2})Z\\Z\"\n)\n_REQUIRED_FIELDS = frozenset(\n    {\"sequence\", \"event_id\", \"actor\", \"action\", \"at\", \"payload\", \"previous_hash\"}\n)\n\n\ndef _canonical(value: Any) -> str:\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef _valid_hash(value: Any) -> bool:\n    return isinstance(value, str) and _HASH_PATTERN.fullmatch(value) is not None\n\n\ndef _parse_timestamp(value: Any) -> datetime | None:\n    if not isinstance(value, str):\n        return None\n    match = _TIMESTAMP_PATTERN.fullmatch(value)\n    if match is None:\n        return None\n    try:\n        year, month, day, hour, minute, second = (\n            int(part) for part in match.groups()\n        )\n        return datetime(\n            year, month, day, hour, minute, second, tzinfo=timezone.utc\n        )\n    except (ValueError, OverflowError):\n        return None\n\n\ndef _utc_timestamp(value: Any) -> str:\n    if not isinstance(value, datetime):\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    try:\n        offset = value.utcoffset()\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at must be a timezone-aware datetime\") from None\n    if value.tzinfo is None or offset is None:\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    if value.microsecond:\n        raise ValueError(\"at must not contain microseconds\")\n    try:\n        normalized = value.astimezone(timezone.utc)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at cannot be normalized to UTC\") from None\n    return normalized.isoformat(timespec=\"seconds\").replace(\"+00:00\", \"Z\")\n\n\ndef _nonempty_string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\nclass AuditChain:\n    \"\"\"Maintain an append-only sequence whose record hashes are linkable.\"\"\"\n\n    def __init__(self) -> None:\n        self.previous_hash = GENESIS_HASH\n        self.records: list[dict[str, Any]] = []\n        self._event_ids: set[str] = set()\n\n\n    def head(self) -> str:\n        \"\"\"Return the current trusted head, or the genesis hash when empty.\"\"\"\n\n        return self.previous_hash\n\n    def append(\n        self,\n        *,\n        event_id: str,\n        actor: str,\n        action: str,\n        at: datetime,\n        payload: dict[str, Any],\n    ) -> dict[str, Any]:\n        \"\"\"Append and return one canonical, hashed audit record.\"\"\"\n\n        event_id = _nonempty_string(event_id, \"event_id\")\n        actor = _nonemp",
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\nimport hashlib\nimport json\n\nimport pytest\n\nfrom trialops.audit import AuditChain, GENESIS_HASH\n\n\nAT = datetime(2024, 6, 15, 12, 0, tzinfo=timezone.utc)\n\n\ndef append_event(chain, event_id=\"event-1\", at=AT, payload=None):\n    return chain.append(\n        event_id=event_id,\n        actor=\"actor-1\",\n        action=\"recorded\",\n        at=at,\n        payload={\"value\": 1} if payload is None else payload,\n    )\n\n\ndef rehash(record):\n    unsigned = {key: value for key, value in record.items() if key != \"hash\"}\n    canonical = json.dumps(\n        unsigned,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n    record[\"hash\"] = hashlib.sha256(canonical.encode(\"utf-8\")).hexdigest()\n    return record\n\n\ndef test_genesis_utc_normalization_and_canonical_payload_order():\n    chain = AuditChain()\n    assert chain.head() == GENESIS_HASH\n    offset_time = datetime(\n        2024, 6, 15, 14, 30, tzinfo=timezone(timedelta(hours=2))\n    )\n    record = chain.append(\n        event_id=\"event-1\",\n        actor=\"actor-1\",\n        action=\"recorded\",\n        at=offset_time,\n        payload={\"z\": 1, \"a\": {\"β\": 2, \"b\": 3}},\n    )\n\n    assert record[\"sequence\"] == 1\n    assert record[\"at\"] == \"2024-06-15T12:30:00Z\"\n    assert record[\"previous_hash\"] == GENESIS_HASH\n    assert chain.previous_hash == record[\"hash\"]\n    assert chain.head() == record[\"hash\"]\n    unsigned = {key: value for key, value in record.items() if key != \"hash\"}\n    expected = json.dumps(\n        unsigned,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n    assert record[\"hash\"] == hashlib.sha256(expected.encode(\"utf-8\")).hexdigest()\n    assert chain.verify(chain.records) == []\n\n\ndef test_payload_insertion_order_does_not_change_hash():\n    first = AuditChain()\n    second = AuditChain()\n    left = append_event(first, payload={\"a\": 1, \"b\": 2})\n    right = append_event(second, payload={\"b\": 2, \"a\": 1})\n\n    assert left[\"hash\"] == right[\"hash\"]\n\n\ndef test_tampering_and_sequence_gaps_are_detected():\n    chain = AuditChain()\n    append_event(chain)\n    append_event(chain, \"event-2\", AT + timedelta(seconds=1))\n\n    tampered = deepcopy(chain.records)\n    tampered[0][\"payload\"][\"value\"] = 99\n    assert \"BAD_HASH\" in chain.verify(tampered)\n\n    gapped = deepcopy(chain.records)\n    gapped[1][\"sequence\"] = 3\n    errors = chain.verify(gapped)\n    assert \"BAD_SEQUENCE\" in errors\n    assert \"BAD_HASH\" in errors\n\n\ndef test_replay_is_not_a_valid_extension():\n    chain = AuditChain()\n    record = append_event(chain)\n\n    errors = chain.verify([record, deepcopy(record)])\n\n    assert errors == [\n        \"BAD_PREVIOUS_HASH\",\n        \"BAD_SEQUENCE\",\n        \"DUPLICATE_EVENT_ID\",\n        \"NON_INCREASING_TIMESTAMP\",\n    ]\n\n\ndef test_append_validation_and_independent_chains():\n    first = AuditChain()\n    second = AuditChain()\n    ap"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 1.9,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_92d8ef4e915f5a3aaf24cb5ea988c470",
+    "name": "read_file",
+    "arguments": "{\"path\":\"README.md\"}"
+   },
+   {
+    "id": "call_ba217864b020504caf8e5a392c1b6f45",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/__init__.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 4165,
+   "output": 79,
+   "reasoning": 51,
+   "cache_read": 1232,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n",
+   "\"\"\"Synthetic trial-operations helpers used by the Bedrock coding benchmark.\"\"\"\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 2.41,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_8575053983b45fcaba075149623958dc",
+    "name": "read_file",
+    "arguments": "{\"path\":\"pyproject.toml\"}"
+   },
+   {
+    "id": "call_728320cec06f5bda897e87588abfc19a",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_smoke.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 4296,
+   "output": 29,
+   "reasoning": 0,
+   "cache_read": 4163,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "[build-system]\nrequires = [\"setuptools>=61\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"trialops\"\nrequires-python = \">=3.11,<3.12\"\ndependencies = [\"tzdata==2025.2\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+   "def test_trialops_package_imports():\n    import trialops\n    assert trialops.__doc__\n"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 15.79,
+  "content": "The implementation is mostly present; `from_records` is missing. Let me check other modules for style conventions, then implement it.",
+  "tool_calls": [
+   {
+    "id": "call_1cf6c30f8d7a5fbe9b112d0b3d8efebf",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/governance.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 4418,
+   "output": 4181,
+   "reasoning": 4138,
+   "cache_read": 4294,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Synthetic data-reuse workflow with explicit, deterministic guardrails.\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport math\nfrom collections.abc import Mapping\nfrom datetime import date, datetime, timedelta, timezone\n\n_ACTIONS = {\"submit\", \"approve\", \"reject\", \"execute\", \"expire\"}\n_PRIVACY_FIELDS = [\"pseudonym\", \"country\", \"birth_year\", \"visits\"]\n\n\ndef _aware_utc(now: object) -> datetime:\n    if not isinstance(now, datetime):\n        raise ValueError(\"INVALID_NOW\")\n    try:\n        if now.tzinfo is None or now.utcoffset() is None:\n            raise ValueError(\"INVALID_NOW\")\n        return now.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(\"INVALID_NOW\") from exc\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n    states = (expected,) if isinstance(expected, str) else expected\n    if request.get(\"status\") not in states:\n        raise ValueError(\"INVALID_STATE\")\n\n\ndef _require_actor(actor: object, expected: object, code: str) -> None:\n    if actor != expected:\n        raise PermissionError(code)\n\n\ndef _date_field(request: Mapping[str, object], field: str, error_code: str) -> date:\n    value = request.get(field)\n    if not isinstance(value, str):\n        raise ValueError(error_code)\n    try:\n        return date.fromisoformat(value)\n    except ValueError as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _valid_quality_score(value: object) -> bool:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return False\n    return math.isfinite(value) and value >= 0.95\n\n\ndef _check_policy(request: Mapping[str, object], now_utc: datetime) -> None:\n    purpose = request.get(\"purpose\")\n    expected_privacy_plan = {\n        \"algorithm\": \"hmac-sha256\",\n        \"domain\": purpose,\n        \"fields\": _PRIVACY_FIELDS,\n    }\n    if request.get(\"privacy_plan\") != expected_privacy_plan:\n        raise ValueError(\"PSEUDONYMIZATION_REQUIRED\")\n\n    metadata = request.get(\"metadata\")\n    if (\n        not isinstance(metadata, Mapping)\n        or metadata.get(\"representative\") is not True\n        or metadata.get(\"complete\") is not True\n        or not _valid_quality_score(metadata.get(\"quality_score\"))\n        or not isinstance(purpose, str)\n        or not purpose.strip()\n    ):\n        raise ValueError(\"METADATA_REQUIRED\")\n\n    retention_until = _date_field(request, \"retention_until\", \"RETENTION_EXPIRED\")\n    if now_utc.date() > retention_until:\n        raise ValueError(\"RETENTION_EXPIRED\")\n\n\ndef _check_approval_current(request: Mapping[str, object], now_utc: datetime) -> None:\n    expires_on = _date_field(request, \"approval_expires_on\", \"APPROVAL_EXPIRED\")\n    if now_utc.date() > expires_on:\n        raise ValueError(\"APPROVAL_EXPIRED\")\n\n\ndef apply_reuse_action(\n    request: dict[str, object],\n    action: str,\n    actor: str,\n    now: datetime,"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 29.52,
+  "content": "The module is largely implemented; `from_records` is missing. Let me add it.",
+  "tool_calls": [
+   {
+    "id": "call_8b381d2b03c35f3183a7c9df12ad7579",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"trialops/audit.py\",\"old_string\":\"        self.records.append(record)\\n        self._event_ids.add(event_id)\\n        self.previous_hash = record[\\\"hash\\\"]\\n        return record\\n\\n    @staticmethod\\n    def verify(\",\"new_string\":\"        self.records.append(record)\\n        self._event_ids.add(event_id)\\n        self.previous_hash = record[\\\"hash\\\"]\\n        return record\\n\\n    @classmethod\\n    def from_records(\\n        cls,\\n        records: Any,\\n        *,\\n        expected_head: str,\\n        expected_length: int,\\n    ) -> \\\"AuditChain\\\":\\n        \\\"\\\"\\\"Restore a persisted snapshot anchored by trusted head and length.\\n\\n        Both anchors are required: they are the only way to detect edits that\\n        were rehashed or a truncated suffix.  The snapshot is materialized\\n        exactly once so generators are safe to pass.\\n        \\\"\\\"\\\"\\n\\n        try:\\n            materialized = list(records)\\n        except (TypeError, ValueError, OverflowError):\\n            raise ValueError(\\\"INVALID_CHAIN:MALFORMED_RECORD\\\") from None\\n\\n        errors = cls.verify(\\n            materialized, expected_head=expected_head, expected_length=expected_length\\n        )\\n        if not _valid_hash(expected_head):\\n            # ``None`` means \\\"not supplied\\\" to ``verify``; the anchor is\\n            # mandatory here and can only ever be a valid chain head.\\n            errors = sorted(set(errors) | {\\\"HEAD_MISMATCH\\\"})\\n        if errors:\\n            raise ValueError(\\\"INVALID_CHAIN:\\\" + \\\",\\\".join(errors))\\n\\n        chain = cls()\\n        chain.records = deepcopy(materialized)\\n        chain._event_ids = {record[\\\"event_id\\\"] for record in chain.records}\\n        chain.previous_hash = expected_head\\n        return chain\\n\\n    @staticmethod\\n    def verify(\"}"
+   }
+  ],
+  "usage": {
+   "input": 5754,
+   "output": 4098,
+   "reasoning": 3711,
+   "cache_read": 4416,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/audit.py"
+  ]
+ },
+ {
+  "call": 7,
+  "t": 33.34,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_fa01c88a540e518490111e20753d81e6",
+    "name": "edit_file",
+    "arguments": "{\"old_string\":\"        errors = cls.verify(\\n            materialized, expected_head=expected_head, expected_length=expected_length\\n        )\\n        if not _valid_hash(expected_head):\\n            # ``None`` means \\\"not supplied\\\" to ``verify``; the anchor is\\n            # mandatory here and can only ever be a valid chain head.\\n            errors = sorted(set(errors) | {\\\"HEAD_MISMATCH\\\"})\\n        if errors:\\n            raise ValueError(\\\"INVALID_CHAIN:\\\" + \\\",\\\".join(errors))\\n\\n        chain = cls()\\n        chain.records = deepcopy(materialized)\\n        chain._event_ids = {record[\\\"event_id\\\"] for record in chain.records}\\n        chain.previous_hash = expected_head\\n        return chain\",\"new_string\":\"        errors = cls.verify(\\n            materialized, expected_head=expected_head, expected_length=expected_length\\n        )\\n        if expected_length is None:\\n            # ``None`` means \\\"not supplied\\\" to ``verify``; both anchors are\\n            # mandatory when restoring a snapshot.\\n            errors = sorted(set(errors) | {\\\"LENGTH_MISMATCH\\\"})\\n        if not _valid_hash(expected_head):\\n            errors = sorted(set(errors) | {\\\"HEAD_MISMATCH\\\"})\\n        if errors:\\n            raise ValueError(\\\"INVALID_CHAIN:\\\" + \\\",\\\".join(errors))\\n\\n        chain = cls()\\n        try:\\n            chain.records = deepcopy(materialized)\\n        except (TypeError, ValueError, OverflowError, RecursionError):\\n            raise ValueError(\\\"INVALID_CHAIN:MALFORMED_RECORD\\\") from None\\n        chain._event_ids = {record[\\\"event_id\\\"] for record in chain.records}\\n        chain.previous_hash = expected_head\\n        return chain\",\"path\":\"trialops/audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 6151,
+   "output": 1084,
+   "reasoning": 734,
+   "cache_read": 5752,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/audit.py"
+  ]
+ },
+ {
+  "call": 8,
+  "t": 33.93,
+  "content": "Now let me review the full module to check the remaining details, especially hash computation over non-JSON-serializable payloads in `verify`:",
+  "tool_calls": [
+   {
+    "id": "call_f872cefb8bab5285bf6dfd460f0a8a85",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 6511,
+   "output": 44,
+   "reasoning": 0,
+   "cache_read": 6149,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"A small tamper-evident chain for synthetic operational events.\"\"\"\n\nfrom copy import deepcopy\nfrom datetime import datetime, timezone\nimport hashlib\nimport json\nimport re\nfrom typing import Any\n\nGENESIS_HASH = \"0\" * 64\n\n_HASH_PATTERN = re.compile(r\"[0-9a-f]{64}\\Z\")\n_TIMESTAMP_PATTERN = re.compile(\n    r\"([0-9]{4})-([0-9]{2})-([0-9]{2})T\"\n    r\"([0-9]{2}):([0-9]{2}):([0-9]{2})Z\\Z\"\n)\n_REQUIRED_FIELDS = frozenset(\n    {\"sequence\", \"event_id\", \"actor\", \"action\", \"at\", \"payload\", \"previous_hash\"}\n)\n\n\ndef _canonical(value: Any) -> str:\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef _valid_hash(value: Any) -> bool:\n    return isinstance(value, str) and _HASH_PATTERN.fullmatch(value) is not None\n\n\ndef _parse_timestamp(value: Any) -> datetime | None:\n    if not isinstance(value, str):\n        return None\n    match = _TIMESTAMP_PATTERN.fullmatch(value)\n    if match is None:\n        return None\n    try:\n        year, month, day, hour, minute, second = (\n            int(part) for part in match.groups()\n        )\n        return datetime(\n            year, month, day, hour, minute, second, tzinfo=timezone.utc\n        )\n    except (ValueError, OverflowError):\n        return None\n\n\ndef _utc_timestamp(value: Any) -> str:\n    if not isinstance(value, datetime):\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    try:\n        offset = value.utcoffset()\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at must be a timezone-aware datetime\") from None\n    if value.tzinfo is None or offset is None:\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    if value.microsecond:\n        raise ValueError(\"at must not contain microseconds\")\n    try:\n        normalized = value.astimezone(timezone.utc)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at cannot be normalized to UTC\") from None\n    return normalized.isoformat(timespec=\"seconds\").replace(\"+00:00\", \"Z\")\n\n\ndef _nonempty_string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\nclass AuditChain:\n    \"\"\"Maintain an append-only sequence whose record hashes are linkable.\"\"\"\n\n    def __init__(self) -> None:\n        self.previous_hash = GENESIS_HASH\n        self.records: list[dict[str, Any]] = []\n        self._event_ids: set[str] = set()\n\n\n    def head(self) -> str:\n        \"\"\"Return the current trusted head, or the genesis hash when empty.\"\"\"\n\n        return self.previous_hash\n\n    def append(\n        self,\n        *,\n        event_id: str,\n        actor: str,\n        action: str,\n        at: datetime,\n        payload: dict[str, Any],\n    ) -> dict[str, Any]:\n        \"\"\"Append and return one canonical, hashed audit record.\"\"\"\n\n        event_id = _nonempty_string(event_id, \"event_id\")\n        actor = _nonemp"
+  ]
+ },
+ {
+  "call": 9,
+  "t": 41.63,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_577b104764615cad9fdadcd8d336849a",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_audit.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 8581,
+   "output": 1835,
+   "reasoning": 1818,
+   "cache_read": 6509,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.......                                                                  [100%]\n"
+  ]
+ },
+ {
+  "call": 10,
+  "t": 76.64,
+  "content": "Existing tests pass. Now let me add tests for `from_records`, including all the requested scenarios.",
+  "tool_calls": [
+   {
+    "id": "call_d7b4b5803aad58dfa4bd38a7e5a7bf87",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"tests/test_audit.py\",\"old_string\":\"def test_independent_golden_record_hash():\\n    record = AuditChain().append(\\n        event_id=\\\"evt-golden\\\",\\n        actor=\\\"actor\\\",\\n        action=\\\"action\\\",\\n        at=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),\\n        payload={\\\"b\\\": 2, \\\"a\\\": \\\"雪\\\"},\\n    )\\n\\n    assert record[\\\"hash\\\"] == \\\"92d5600f044f4bcd2134215e770f49cac60926e50670c3f58930eba13db528ba\\\"\",\"new_string\":\"def test_independent_golden_record_hash():\\n    record = AuditChain().append(\\n        event_id=\\\"evt-golden\\\",\\n        actor=\\\"actor\\\",\\n        action=\\\"action\\\",\\n        at=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),\\n        payload={\\\"b\\\": 2, \\\"a\\\": \\\"雪\\\"},\\n    )\\n\\n    assert record[\\\"hash\\\"] == \\\"92d5600f044f4bcd2134215e770f49cac60926e50670c3f58930eba13db528ba\\\"\\n\\n\\ndef build_chain(count=2):\\n    chain = AuditChain()\\n    for index in range(count):\\n        append_event(\\n            chain,\\n            event_id=f\\\"event-{index + 1}\\\",\\n            at=AT + timedelta(seconds=index),\\n            payload={\\\"index\\\": index},\\n        )\\n    return chain\\n\\n\\ndef test_from_records_restores_and_continues():\\n    original = build_chain()\\n    snapshot = deepcopy(original.records)\\n\\n    restored = AuditChain.from_records(\\n        snapshot, expected_head=original.head(), expected_length=2\\n    )\\n\\n    assert restored.records == snapshot\\n    assert restored.head() == original.head()\\n    assert restored.previous_hash == original.head()\\n\\n    continued = restored.append(\\n        event_id=\\\"event-3\\\",\\n        actor=\\\"actor-1\\\",\\n        action=\\\"recorded\\\",\\n        at=AT + timedelta(seconds=2),\\n        payload={\\\"value\\\": 3},\\n    )\\n    assert continued[\\\"sequence\\\"] == 3\\n    assert continued[\\\"previous_hash\\\"] == original.head()\\n    assert restored.head() == continued[\\\"hash\\\"]\\n    assert AuditChain.verify(restored.records) == []\\n    # The source chain is untouched by the continuation.\\n    assert len(original.records) == 2\\n    assert AuditChain.verify(original.records) == []\\n\\n\\ndef test_from_records_restores_duplicate_event_id_index():\\n    original = build_chain(count=1)\\n    restored = AuditChain.from_records(\\n        original.records, expected_head=original.head(), expected_length=1\\n    )\\n\\n    with pytest.raises(ValueError, match=\\\"unique\\\"):\\n        restored.append(\\n            event_id=\\\"event-1\\\",\\n            actor=\\\"actor-1\\\",\\n            action=\\\"recorded\\\",\\n            at=AT + timedelta(seconds=5),\\n            payload={},\\n        )\\n    assert len(restored.records) == 1\\n\\n\\ndef test_from_records_is_deep_copy_independent():\\n    original = build_chain()\\n    snapshot = deepcopy(original.records)\\n    restored = AuditChain.from_records(\\n        snapshot, expected_head=original.head(), expected_length=2\\n    )\\n\\n    # Mutating the input snapshot never reaches the restored chain.\\n    snapshot[0][\\\"payload\\\"][\\\"index\\\"] = 99\\n    snapshot.append({\\\"sequence\\\": 3})\\n    assert restored.records[0][\\\"payload\\\"][\\\"index\\\"] == 0\\n    assert len(restored.records) == 2\\n    assert AuditChain.verify(restored.records) == []\\n\\n    # Mutating the restored chain never reaches the input snapshot.\\n    restored.records[1][\\\"payload\\\"][\\\"index\\\"] = 42\\n    restored.records.pop()\\n    assert snapshot[1][\\\"payload\\\"][\\\"index\\\"] == 1\\n    assert len(snapshot) == 3\\n\\n\\ndef test_from_records_rejects_wrong_anchors():\\n    chain = build_chain()\\n\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            chain.records, expected_head=GENESIS_HASH, expected_length=2\\n        )\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            chain.records, expected_head=chain.head(), expected_length=1\\n        )\\n    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH$\\\"\\n    ):\\n        AuditChain.from_records(\\n            chain.records, expected_head=GENESIS_HASH, expected_length=3\\n        )\\n\\n\\ndef test_from_records_rejects_truncated_suffix():\\n    chain = build_chain()\\n\\n    # A truncated chain is internally consistent, so only the trusted\\n    # anchors expose the missing suffix.\\n    truncated = deepcopy(chain.records[:1])\\n    assert AuditChain.verify(truncated) == []\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            truncated, expected_head=truncated[0][\\\"hash\\\"], expected_length=2\\n        )\\n    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH$\\\"\\n    ):\\n        AuditChain.from_records(\\n            truncated, expected_head=chain.head(), expected_length=2\\n        )\\n\\n\\ndef test_from_records_rejects_tampering_even_when_rehashed():\\n    chain = build_chain()\\n\\n    unrehashed = deepcopy(chain.records)\\n    unrehashed[0][\\\"payload\\\"][\\\"index\\\"] = 99\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:BAD_HASH$\\\"):\\n        AuditChain.from_records(\\n            unrehashed, expected_head=chain.head(), expected_length=2\\n        )\\n\\n    rehashed = deepcopy(chain.records)\\n    rehashed[0][\\\"payload\\\"][\\\"index\\\"] = 99\\n    rehash(rehashed[0])\\n    assert AuditChain.verify(rehashed) == [\\\"BAD_PREVIOUS_HASH\\\"]\\n    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:BAD_PREVIOUS_HASH,HEAD_MISMATCH$\\\"\\n    ):\\n        AuditChain.from_records(\\n            rehashed, expected_head=chain.head(), expected_length=2\\n        )\\n\\n    # A fully rehashed rewrite still no longer matches the trusted head.\\n    fully_rehashed = deepcopy(chain.records)\\n    fully_rehashed[0][\\\"payload\\\"][\\\"index\\\"] = 99\\n    for record in fully_rehashed:\\n        rehash(record)\\n        if record[\\\"sequence\\\"] > 1:\\n            record[\\\"previous_hash\\\"] = fully_rehashed[record[\\\"sequence\\\"] - 2][\\\"hash\\\"]\\n            rehash(record)\\n    assert AuditChain.verify(fully_rehashed) == []\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            fully_rehashed, expected_head=chain.head(), expected_length=2\\n        )\\n\\n\\ndef test_from_records_accepts_empty_snapshot_only_at_genesis():\\n    empty = AuditChain.from_records([], expected_head=GENESIS_HASH, expected_length=0)\\n\\n    assert empty.records == []\\n    assert empty.head() == GENESIS_HASH\\n    assert empty.previous_hash == GENESIS_HASH\\n\\n    first = append_event(empty)\\n    assert first[\\\"sequence\\\"] == 1\\n    assert first[\\\"previous_hash\\\"] == GENESIS_HASH\\n    assert AuditChain.verify(empty.records) == []\\n\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH$\\\"):\\n        AuditChain.from_records([], expected_head=\\\"f\\\" * 64, expected_length=0)\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records([], expected_head=GENESIS_HASH, expected_length=1)\\n\\n\\ndef test_from_records_requires_both_trusted_anchors():\\n    chain = build_chain(count=1)\\n\\n    with pytest.raises(TypeError):\\n        AuditChain.from_records(chain.records, expected_head=chain.head())\\n    with pytest.raises(TypeError):\\n        AuditChain.from_records(chain.records, expected_length=1)\\n    with pytest.raises(TypeError):\\n        AuditChain.from_records(chain.records)\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            chain.records, expected_head=None, expected_length=1\\n        )\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            chain.records, expected_head=chain.head(), expected_length=None\\n        )\\n\\n\\ndef test_from_records_materializes_input_once_and_yields_independent_instances():\\n    chain = build_chain()\\n    snapshot = deepcopy(chain.records)\\n\\n    first = AuditChain.from_records(\\n        (record for record in snapshot),\\n        expected_head=chain.head(),\\n        expected_length=2,\\n    )\\n    second = AuditChain.from_records(\\n        snapshot, expected_head=chain.head(), expected_length=2\\n    )\\n\\n    assert first.records == second.records\\n\\n    first.records[0][\\\"payload\\\"][\\\"index\\\"] = 77\\n    first.records.pop()\\n    assert second.records[0][\\\"payload\\\"][\\\"index\\\"] == 0\\n    assert len(second.records) == 2\\n    assert AuditChain.verify(second.records) == []\\n    assert second.head() == chain.head()\\n\\n    continued = second.append(\\n        event_id=\\\"event-3\\\",\\n        actor=\\\"actor-1\\\",\\n        action=\\\"recorded\\\",\\n        at=AT + timedelta(seconds=9),\\n        payload={},\\n    )\\n    assert continued[\\\"sequence\\\"] == 3\\n    assert continued[\\\"previous_hash\\\"] == chain.head()\\n\\n\\ndef test_from_records_rejects_malformed_snapshots():\\n    chain = build_chain(count=1)\\n\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:MALFORMED_RECORD$\\\"):\\n        AuditChain.from_records(\\n            [chain.records[0], \\\"not-a-record\\\"],\\n            expected_head=chain.head(),\\n            expected_length=1,\\n        )\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            None, expected_head=GENESIS_HASH, expected_length=0\\n        )\"}"
+   }
+  ],
+  "usage": {
+   "input": 8613,
+   "output": 5318,
+   "reasoning": 3213,
+   "cache_read": 8579,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_audit.py"
+  ]
+ },
+ {
+  "call": 11,
+  "t": 77.57,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_69a3b69e8bba554b8372d4690f6443fd",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_audit.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 10724,
+   "output": 17,
+   "reasoning": 0,
+   "cache_read": 8611,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 1\n............F...F                                                        [100%]\n=================================== FAILURES ===================================\n____________ test_from_records_rejects_tampering_even_when_rehashed ____________\n\n    def test_from_records_rejects_tampering_even_when_rehashed():\n        chain = build_chain()\n    \n        unrehashed = deepcopy(chain.records)\n        unrehashed[0][\"payload\"][\"index\"] = 99\n        with pytest.raises(ValueError, match=\"^INVALID_CHAIN:BAD_HASH$\"):\n            AuditChain.from_records(\n                unrehashed, expected_head=chain.head(), expected_length=2\n            )\n    \n        rehashed = deepcopy(chain.records)\n        rehashed[0][\"payload\"][\"index\"] = 99\n        rehash(rehashed[0])\n        assert AuditChain.verify(rehashed) == [\"BAD_PREVIOUS_HASH\"]\n>       with pytest.raises(\n            ValueError, match=\"^INVALID_CHAIN:BAD_PREVIOUS_HASH,HEAD_MISMATCH$\"\n        ):\nE       AssertionError: \nE       - INVALID_CHAIN:BAD_PREVIOUS_HASH\nE       + INVALID_CHAIN:BAD_PREVIOUS_HASH,HEAD_MISMATCH\nE       ?                                ++++++++++++++\n\ntests/test_audit.py:291: AssertionError\n________________ test_from_records_rejects_malformed_snapshots _________________\n\n    def test_from_records_rejects_malformed_snapshots():\n        chain = build_chain(count=1)\n    \n>       with pytest.raises(ValueError, match=\"^INVALID_CHAIN:MALFORMED_RECORD$\"):\nE       AssertionError: \nE       - INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH,MALFORMED_RECORD\nE       + INVALID_CHAIN:MALFORMED_RECORD\n\ntests/test_audit.py:386: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_audit.py::test_from_records_rejects_tampering_even_when_rehashed\nFAILED tests/test_audit.py::test_from_records_rejects_malformed_snapshots - A...\n"
+  ]
+ },
+ {
+  "call": 12,
+  "t": 81.46,
+  "content": "Both failures are my test expectation mistakes. Let me fix them:",
+  "tool_calls": [
+   {
+    "id": "call_15dd568c246250b48fc0f449db6ed0c7",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    assert AuditChain.verify(rehashed) == [\\\"BAD_PREVIOUS_HASH\\\"]\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:BAD_PREVIOUS_HASH$\\\"):\\n        AuditChain.from_records(\\n            rehashed, expected_head=chain.head(), expected_length=2\\n        )\",\"old_string\":\"    assert AuditChain.verify(rehashed) == [\\\"BAD_PREVIOUS_HASH\\\"]\\n    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:BAD_PREVIOUS_HASH,HEAD_MISMATCH$\\\"\\n    ):\\n        AuditChain.from_records(\\n            rehashed, expected_head=chain.head(), expected_length=2\\n        )\",\"path\":\"tests/test_audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 11140,
+   "output": 821,
+   "reasoning": 661,
+   "cache_read": 10722,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_audit.py"
+  ]
+ },
+ {
+  "call": 13,
+  "t": 84.05,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_c01ca941cf31501f900b96153134c917",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH,MALFORMED_RECORD$\\\"\\n    ):\\n        AuditChain.from_records(\\n            [chain.records[0], \\\"not-a-record\\\"],\\n            expected_head=chain.head(),\\n            expected_length=1,\\n        )\",\"old_string\":\"    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:MALFORMED_RECORD$\\\"):\\n        AuditChain.from_records(\\n            [chain.records[0], \\\"not-a-record\\\"],\\n            expected_head=chain.head(),\\n            expected_length=1,\\n        )\",\"path\":\"tests/test_audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 11309,
+   "output": 141,
+   "reasoning": 0,
+   "cache_read": 11138,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_audit.py"
+  ]
+ },
+ {
+  "call": 14,
+  "t": 87.37,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_a4efa023bcb8576f8d0f82d74f12c9ee",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_audit.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 11459,
+   "output": 17,
+   "reasoning": 0,
+   "cache_read": 11307,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 1\n................F                                                        [100%]\n=================================== FAILURES ===================================\n________________ test_from_records_rejects_malformed_snapshots _________________\n\n    def test_from_records_rejects_malformed_snapshots():\n        chain = build_chain(count=1)\n    \n        with pytest.raises(\n            ValueError, match=\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH,MALFORMED_RECORD$\"\n        ):\n            AuditChain.from_records(\n                [chain.records[0], \"not-a-record\"],\n                expected_head=chain.head(),\n                expected_length=1,\n            )\n>       with pytest.raises(ValueError, match=\"^INVALID_CHAIN:LENGTH_MISMATCH$\"):\nE       AssertionError: \nE       - INVALID_CHAIN:MALFORMED_RECORD\nE       + INVALID_CHAIN:LENGTH_MISMATCH\n\ntests/test_audit.py:392: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_audit.py::test_from_records_rejects_malformed_snapshots - A...\n"
+  ]
+ },
+ {
+  "call": 15,
+  "t": 92.27,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_e7f84b9f74845cc8803be80408b295c5",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    with pytest.raises(\\n        ValueError,\\n        match=\\\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH,MALFORMED_RECORD$\\\",\\n    ):\\n        AuditChain.from_records(\\n            [chain.records[0], \\\"not-a-record\\\"],\\n            expected_head=chain.head(),\\n            expected_length=1,\\n        )\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:MALFORMED_RECORD$\\\"):\\n        AuditChain.from_records(\\n            None, expected_head=GENESIS_HASH, expected_length=0\\n        )\",\"old_string\":\"    with pytest.raises(\\n        ValueError, match=\\\"^INVALID_CHAIN:HEAD_MISMATCH,LENGTH_MISMATCH,MALFORMED_RECORD$\\\"\\n    ):\\n        AuditChain.from_records(\\n            [chain.records[0], \\\"not-a-record\\\"],\\n            expected_head=chain.head(),\\n            expected_length=1,\\n        )\\n    with pytest.raises(ValueError, match=\\\"^INVALID_CHAIN:LENGTH_MISMATCH$\\\"):\\n        AuditChain.from_records(\\n            None, expected_head=GENESIS_HASH, expected_length=0\\n        )\",\"path\":\"tests/test_audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 11682,
+   "output": 301,
+   "reasoning": 66,
+   "cache_read": 11457,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_audit.py"
+  ]
+ },
+ {
+  "call": 16,
+  "t": 93.6,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_fbf75ba102145a70bac76c5a8d1fce08",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_audit.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 11926,
+   "output": 17,
+   "reasoning": 0,
+   "cache_read": 11680,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.................                                                        [100%]\n"
+  ]
+ },
+ {
+  "call": 17,
+  "t": 106.65,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_c57cbd3fb2185b729eb3ad0a8bf70ab7",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"-q\"}"
+   }
+  ],
+  "usage": {
+   "input": 11959,
+   "output": 2126,
+   "reasoning": 2114,
+   "cache_read": 11924,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.........................................................                [100%]\n"
+  ]
+ },
+ {
+  "call": 18,
+  "t": 113.87,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_b4ed8adf7f395074aa4a980cb2a0892b",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    def __init__(self) -> None:\\n        self.previous_hash = GENESIS_HASH\\n        self.records: list[dict[str, Any]] = []\\n        self._event_ids: set[str] = set()\\n\\n    def head(self) -> str:\",\"old_string\":\"    def __init__(self) -> None:\\n        self.previous_hash = GENESIS_HASH\\n        self.records: list[dict[str, Any]] = []\\n        self._event_ids: set[str] = set()\\n\\n\\n    def head(self) -> str:\",\"path\":\"trialops/audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 11988,
+   "output": 1165,
+   "reasoning": 1033,
+   "cache_read": 11957,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/audit.py"
+  ]
+ },
+ {
+  "call": 19,
+  "t": 115.47,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_ef615413be125a798b2bc0233ae6a667",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_audit.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 12130,
+   "output": 17,
+   "reasoning": 0,
+   "cache_read": 11986,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.................                                                        [100%]\n"
+  ]
+ },
+ {
+  "call": 20,
+  "t": 118.48,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_69efe0123d005a38a4af5f9732ac5137",
+    "name": "finish",
+    "arguments": "{\"summary\":\"Implemented `AuditChain.from_records` in `trialops/audit.py` (the rest of the audit chain — append/verify/head/trusted anchors — was already present and is unchanged).\\n\\n`AuditChain.from_records(records, *, expected_head, expected_length)`:\\n- Both trusted anchors are required keyword arguments; the input is materialized exactly once via `list(...)`, so generators are safe.\\n- Validation delegates to `verify(..., expected_head=..., expected_length=...)` for the internal checks (sequence, previous-hash linkage, record hash, duplicate event IDs, non-increasing timestamps, malformed timestamps/hashes, non-dict payloads) plus `HEAD_MISMATCH` / `LENGTH_MISMATCH`.\\n- Empty snapshots are valid only with `expected_length=0` and `expected_head=GENESIS_HASH`.\\n- Errors raise `ValueError` with exactly `INVALID_CHAIN:` plus the sorted, comma-joined codes. Passing `None` for a required anchor yields the corresponding mismatch code rather than silently skipping the check; a non-hex-64 head yields `HEAD_MISMATCH`.\\n- On success it returns a fresh, independent chain holding a deep copy of the records, with `previous_hash` set to `expected_head` and the duplicate-event-ID index rebuilt, so the next append uses sequence `expected_length + 1` and links to the restored head. `append` behaviour is otherwise unchanged.\\n\\nAdded tests covering restore-and-continue, restored duplicate-event-ID rejection, deep-copy independence in both directions, wrong anchors, truncated suffixes, un-rehashed/rehashed tampering, empty-snapshot rules, required anchors, generator inputs, independent restored instances, and malformed snapshots. Full suite (57 tests) passes with no new dependencies.\"}"
+   }
+  ],
+  "usage": {
+   "input": 12163,
+   "output": 360,
+   "reasoning": 0,
+   "cache_read": 12128,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "ok"
+  ]
+ }
+]

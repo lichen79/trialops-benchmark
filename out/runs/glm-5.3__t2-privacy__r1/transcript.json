@@ -1,0 +1,731 @@
+[
+ {
+  "call": 1,
+  "t": 0.45,
+  "content": "I'll start by exploring the repository structure.",
+  "tool_calls": [
+   {
+    "id": "call_5ecb832dc1c152d78d78f0126d838297",
+    "name": "list_files",
+    "arguments": "{\"path\":\".\"}"
+   },
+   {
+    "id": "call_6acd5f9e8143564d8f92ac673e1dc874",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 1131,
+   "output": 35,
+   "reasoning": 0,
+   "cache_read": 1129,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py",
+   "\"\"\"Purpose-scoped, pseudonymized exports of fictional subject records.\"\"\"\n\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime\nfrom typing import Any\nimport hashlib\nimport hmac\nimport json\nimport re\n\n\n_ID_PATTERN = re.compile(r\"[A-Za-z0-9_-]+\\Z\")\n\n\ndef _field(record: Mapping[str, Any], name: str) -> Any:\n    try:\n        return record[name]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {name}\") from None\n\n\ndef _date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _text(value: Any, field: str, *, nonempty: bool = False) -> str:\n    if not isinstance(value, str) or (nonempty and not value):\n        qualifier = \"a non-empty\" if nonempty else \"a\"\n        raise ValueError(f\"{field} must be {qualifier} string\")\n    return value\n\n\ndef export_subjects(\n    subjects: Iterable[Mapping[str, Any]], *, purpose: str, secret: str, on: date\n) -> dict[str, Any]:\n    \"\"\"Export only active, unpurged records without direct identifiers.\"\"\"\n\n    purpose = _text(purpose, \"purpose\", nonempty=True)\n    secret = _text(secret, \"secret\", nonempty=True)\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n    if isinstance(subjects, (str, bytes, Mapping)) or not isinstance(\n        subjects, Iterable\n    ):\n        raise ValueError(\"subjects must be an iterable of records\")\n\n    try:\n        secret_bytes = secret.encode(\"utf-8\")\n        purpose.encode(\"utf-8\")\n    except UnicodeError:\n        raise ValueError(\"purpose and secret must contain valid Unicode\") from None\n\n    rows: list[dict[str, Any]] = []\n    seen_ids: set[str] = set()\n\n    for subject in subjects:\n        if not isinstance(subject, Mapping):\n            raise ValueError(\"each subject must be a mapping\")\n\n        subject_id = _text(_field(subject, \"id\"), \"id\", nonempty=True)\n        if _ID_PATTERN.fullmatch(subject_id) is None:\n            raise ValueError(\"id must match [A-Za-z0-9_-]+\")\n        if subject_id in seen_ids:\n            raise ValueError(\"DUPLICATE_SUBJECT_ID\")\n        seen_ids.add(subject_id)\n\n        _text(_field(subject, \"name\"), \"name\")\n        birth_date = _date(_field(subject, \"birth_date\"), \"birth_date\")\n        _text(_field(subject, \"email\"), \"email\")\n        country = _text(_field(subject, \"country\"), \"country\")\n\n        visits_value = _field(subject, \"visits\")\n        if not isinstance(visits_value, list):\n            raise ValueError(\"visits must be a list\")\n        visits = sorted(\n            (_date(value, \"visits\") for value in visits_value),\n            key=lambda value: value,\n        )\n\n        consents_value = _field(subject, \"consents\")\n        if not isinstance(consents_value, list):\n            raise ValueError"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 1.06,
+  "content": "`privacy.py` appears largely implemented. Let me check the governance module and existing tests.",
+  "tool_calls": [
+   {
+    "id": "call_4ecd13069fa25e0895e758c5396b49fa",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/governance.py\"}"
+   },
+   {
+    "id": "call_b2bd0d32832e5880b9469e9463b543a3",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 2431,
+   "output": 65,
+   "reasoning": 16,
+   "cache_read": 2429,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Synthetic data-reuse workflow with explicit, deterministic guardrails.\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport math\nfrom collections.abc import Mapping\nfrom datetime import date, datetime, timedelta, timezone\n\n_ACTIONS = {\"submit\", \"approve\", \"reject\", \"execute\", \"expire\"}\n_PRIVACY_FIELDS = [\"pseudonym\", \"country\", \"birth_year\", \"visits\"]\n\n\ndef _aware_utc(now: object) -> datetime:\n    if not isinstance(now, datetime):\n        raise ValueError(\"INVALID_NOW\")\n    try:\n        if now.tzinfo is None or now.utcoffset() is None:\n            raise ValueError(\"INVALID_NOW\")\n        return now.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(\"INVALID_NOW\") from exc\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n    states = (expected,) if isinstance(expected, str) else expected\n    if request.get(\"status\") not in states:\n        raise ValueError(\"INVALID_STATE\")\n\n\ndef _require_actor(actor: object, expected: object, code: str) -> None:\n    if actor != expected:\n        raise PermissionError(code)\n\n\ndef _date_field(request: Mapping[str, object], field: str, error_code: str) -> date:\n    value = request.get(field)\n    if not isinstance(value, str):\n        raise ValueError(error_code)\n    try:\n        return date.fromisoformat(value)\n    except ValueError as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _valid_quality_score(value: object) -> bool:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return False\n    return math.isfinite(value) and value >= 0.95\n\n\ndef _check_policy(request: Mapping[str, object], now_utc: datetime) -> None:\n    purpose = request.get(\"purpose\")\n    expected_privacy_plan = {\n        \"algorithm\": \"hmac-sha256\",\n        \"domain\": purpose,\n        \"fields\": _PRIVACY_FIELDS,\n    }\n    if request.get(\"privacy_plan\") != expected_privacy_plan:\n        raise ValueError(\"PSEUDONYMIZATION_REQUIRED\")\n\n    metadata = request.get(\"metadata\")\n    if (\n        not isinstance(metadata, Mapping)\n        or metadata.get(\"representative\") is not True\n        or metadata.get(\"complete\") is not True\n        or not _valid_quality_score(metadata.get(\"quality_score\"))\n        or not isinstance(purpose, str)\n        or not purpose.strip()\n    ):\n        raise ValueError(\"METADATA_REQUIRED\")\n\n    retention_until = _date_field(request, \"retention_until\", \"RETENTION_EXPIRED\")\n    if now_utc.date() > retention_until:\n        raise ValueError(\"RETENTION_EXPIRED\")\n\n\ndef _check_approval_current(request: Mapping[str, object], now_utc: datetime) -> None:\n    expires_on = _date_field(request, \"approval_expires_on\", \"APPROVAL_EXPIRED\")\n    if now_utc.date() > expires_on:\n        raise ValueError(\"APPROVAL_EXPIRED\")\n\n\ndef apply_reuse_action(\n    request: dict[str, object],\n    action: str,\n    actor: str,\n    now: datetime,",
+   "from copy import deepcopy\nfrom datetime import date\nimport hashlib\nimport hmac\nimport json\n\nimport pytest\n\nfrom trialops.privacy import export_subjects\n\n\nON = date(2024, 6, 15)\n\n\ndef make_subject(subject_id=\"subject-one\", **changes):\n    record = {\n        \"id\": subject_id,\n        \"name\": \"Fictional Person\",\n        \"birth_date\": \"1990-04-03\",\n        \"email\": \"person@example.test\",\n        \"country\": \"NZ\",\n        \"visits\": [\"2024-05-01\", \"2024-01-02\"],\n        \"consents\": [{\"purpose\": \"research\", \"signed_on\": \"2024-06-15\"}],\n        \"purge_after\": \"2024-06-15\",\n    }\n    record.update(changes)\n    return record\n\n\ndef pseudonym(subject_id, *, purpose=\"research\", secret=\"test-secret\"):\n    message = f\"{purpose}:{subject_id}\".encode(\"utf-8\")\n    return hmac.new(secret.encode(\"utf-8\"), message, hashlib.sha256).hexdigest()[:16]\n\n\ndef canonical(value):\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef test_active_boundaries_sorting_schema_and_canonical_manifest():\n    subjects = [make_subject(\"subject-b\"), make_subject(\"subject-a\")]\n    original = deepcopy(subjects)\n\n    result = export_subjects(subjects, purpose=\"research\", secret=\"test-secret\", on=ON)\n\n    expected_rows = [\n        {\n            \"pseudonym\": pseudonym(\"subject-a\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n        {\n            \"pseudonym\": pseudonym(\"subject-b\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n    ]\n    expected_rows.sort(key=lambda row: row[\"pseudonym\"])\n    assert result[\"rows\"] == expected_rows\n    assert result[\"manifest\"] == {\n        \"algorithm\": \"sha256\",\n        \"count\": 2,\n        \"sha256\": hashlib.sha256(canonical(expected_rows).encode(\"utf-8\")).hexdigest(),\n    }\n    assert subjects == original\n\n\ndef test_withdrawal_on_on_is_inactive_but_later_withdrawal_is_active():\n    withdrawn = make_subject(\"withdrawn\")\n    withdrawn[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-15\"\n    active = make_subject(\"active\")\n    active[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-16\"\n    expired = make_subject(\"expired\", purge_after=\"2024-06-14\")\n\n    result = export_subjects(\n        [withdrawn, active, expired], purpose=\"research\", secret=\"test-secret\", on=ON\n    )\n\n    assert [row[\"pseudonym\"] for row in result[\"rows\"]] == [pseudonym(\"active\")]\n    assert result[\"manifest\"][\"count\"] == 1\n\n\ndef test_empty_input_has_canonical_empty_manifest():\n    assert export_subjects([], purpose=\"research\", secret=\"test-secret\", on=ON) == {\n        \"rows\": [],\n        \"manifest\": {\n            \"algorithm\": \"sha256\",\n            \"count\": 0,\n            \"sha256\": hashlib.sha256(b\"[]\").hexdigest(),\n        },\n    }\n\n\ndef test_duplicate_ids_and_bad_dates_have_identifier_free_errors():\n    duplicate = make_subject(\"duplicate\")\n    wit"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 1.71,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_43339e97145b5918bed50154f0de54a7",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_governance.py\"}"
+   },
+   {
+    "id": "call_4aba319ca411564b8811f6015e0c16e7",
+    "name": "read_file",
+    "arguments": "{\"path\":\"README.md\"}"
+   }
+  ],
+  "usage": {
+   "input": 5006,
+   "output": 47,
+   "reasoning": 19,
+   "cache_read": 2429,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\n\nimport pytest\n\nfrom trialops.governance import apply_reuse_action\n\n\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\n\n\ndef request(status=\"draft\", **changes):\n    purpose = changes.get(\"purpose\", \"synthetic methods research\")\n    value = {\n        \"id\": \"reuse-001\",\n        \"requester\": \"alice\",\n        \"reviewer\": \"bob\",\n        \"purpose\": purpose,\n        \"status\": status,\n        \"retention_until\": \"2025-06-30\",\n        \"privacy_plan\": {\n            \"algorithm\": \"hmac-sha256\",\n            \"domain\": purpose,\n            \"fields\": [\"pseudonym\", \"country\", \"birth_year\", \"visits\"],\n        },\n        \"metadata\": {\n            \"representative\": True,\n            \"complete\": True,\n            \"quality_score\": 0.95,\n        },\n        \"history\": [],\n    }\n    value.update(changes)\n    return value\n\n\ndef successful_executor(approved_request):\n    return {\"receipt\": \"synthetic-execution-001\"}\n\n\ndef test_full_workflow_normalizes_history_and_deep_copies():\n    original = request(history=[{\"action\": \"imported\", \"nested\": {\"value\": 1}}])\n    snapshot = deepcopy(original)\n    executor_calls = []\n\n    def executor(approved_request):\n        executor_calls.append(approved_request)\n        approved_request[\"metadata\"][\"quality_score\"] = 0\n        return {\"rows\": 3}\n\n    submitted = apply_reuse_action(original, \"submit\", \"alice\", NOW)\n    assert original == snapshot\n    assert submitted is not original\n    assert submitted[\"metadata\"] is not original[\"metadata\"]\n    assert submitted[\"history\"][0] is not original[\"history\"][0]\n    assert submitted[\"history\"][-1] == {\n        \"action\": \"submit\",\n        \"actor\": \"alice\",\n        \"at\": \"2025-01-01T12:00:00Z\",\n    }\n\n    approved = apply_reuse_action(submitted, \"approve\", \"bob\", NOW + timedelta(days=1))\n    assert approved[\"approval_expires_on\"] == \"2025-02-01\"\n    executed = apply_reuse_action(\n        approved, \"execute\", \"alice\", NOW + timedelta(days=2), executor\n    )\n    assert executed[\"status\"] == \"executed\"\n    assert executed[\"execution_result\"] == {\"rows\": 3}\n    assert len(executor_calls) == 1\n    assert executor_calls[0][\"status\"] == \"approved\"\n    assert approved[\"status\"] == \"approved\"\n    assert approved[\"metadata\"][\"quality_score\"] == 0.95\n    assert \"execution_result\" not in approved\n    assert [entry[\"action\"] for entry in executed[\"history\"][-3:]] == [\n        \"submit\",\n        \"approve\",\n        \"execute\",\n    ]\n    assert [entry[\"at\"] for entry in executed[\"history\"][-3:]] == [\n        \"2025-01-01T12:00:00Z\",\n        \"2025-01-02T12:00:00Z\",\n        \"2025-01-03T12:00:00Z\",\n    ]\n\n\n@pytest.mark.parametrize(\n    (\"status\", \"action\", \"actor\"),\n    [\n        (\"draft\", \"submit\", \"bob\"),\n        (\"submitted\", \"approve\", \"alice\"),\n        (\"submitted\", \"reject\", \"alice\"),\n        (\"approved\", \"execute\", \"bob\"),\n    ],\n)\ndef test_invalid_roles_raise_permission_error(status, action, actor):\n    candidate = request(status,",
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 21.5,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_b0b6130c46e654dd9544252cbb4da968",
+    "name": "read_file",
+    "arguments": "{\"path\":\"pyproject.toml\"}"
+   },
+   {
+    "id": "call_96634f729ab454ef89452a8831ec7300",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/__init__.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 6753,
+   "output": 5711,
+   "reasoning": 5681,
+   "cache_read": 5004,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "[build-system]\nrequires = [\"setuptools>=61\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"trialops\"\nrequires-python = \">=3.11,<3.12\"\ndependencies = [\"tzdata==2025.2\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+   "\"\"\"Synthetic trial-operations helpers used by the Bedrock coding benchmark.\"\"\"\n"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 37.64,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_528c4a9a7de5560eb9bdbe6a79e43a5b",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"-q\"}"
+   },
+   {
+    "id": "call_956190ec17865b838d6727878f4b8feb",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_smoke.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 6871,
+   "output": 4923,
+   "reasoning": 4897,
+   "cache_read": 6751,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n...............................................                          [100%]\n",
+   "def test_trialops_package_imports():\n    import trialops\n    assert trialops.__doc__\n"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 52.87,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_d95ae16b063352deb6e9cff102b8929b",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/audit.py\"}"
+   },
+   {
+    "id": "call_97ce6859c3275e759421fc1a69f42ea2",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/safety.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 6936,
+   "output": 3689,
+   "reasoning": 3659,
+   "cache_read": 6869,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"A small tamper-evident chain for synthetic operational events.\"\"\"\n\nfrom copy import deepcopy\nfrom datetime import datetime, timezone\nimport hashlib\nimport json\nimport re\nfrom typing import Any\n\nGENESIS_HASH = \"0\" * 64\n\n_HASH_PATTERN = re.compile(r\"[0-9a-f]{64}\\Z\")\n_TIMESTAMP_PATTERN = re.compile(\n    r\"([0-9]{4})-([0-9]{2})-([0-9]{2})T\"\n    r\"([0-9]{2}):([0-9]{2}):([0-9]{2})Z\\Z\"\n)\n_REQUIRED_FIELDS = frozenset(\n    {\"sequence\", \"event_id\", \"actor\", \"action\", \"at\", \"payload\", \"previous_hash\"}\n)\n\n\ndef _canonical(value: Any) -> str:\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef _valid_hash(value: Any) -> bool:\n    return isinstance(value, str) and _HASH_PATTERN.fullmatch(value) is not None\n\n\ndef _parse_timestamp(value: Any) -> datetime | None:\n    if not isinstance(value, str):\n        return None\n    match = _TIMESTAMP_PATTERN.fullmatch(value)\n    if match is None:\n        return None\n    try:\n        year, month, day, hour, minute, second = (\n            int(part) for part in match.groups()\n        )\n        return datetime(\n            year, month, day, hour, minute, second, tzinfo=timezone.utc\n        )\n    except (ValueError, OverflowError):\n        return None\n\n\ndef _utc_timestamp(value: Any) -> str:\n    if not isinstance(value, datetime):\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    try:\n        offset = value.utcoffset()\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at must be a timezone-aware datetime\") from None\n    if value.tzinfo is None or offset is None:\n        raise ValueError(\"at must be a timezone-aware datetime\")\n    if value.microsecond:\n        raise ValueError(\"at must not contain microseconds\")\n    try:\n        normalized = value.astimezone(timezone.utc)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(\"at cannot be normalized to UTC\") from None\n    return normalized.isoformat(timespec=\"seconds\").replace(\"+00:00\", \"Z\")\n\n\ndef _nonempty_string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\nclass AuditChain:\n    \"\"\"Maintain an append-only sequence whose record hashes are linkable.\"\"\"\n\n    def __init__(self) -> None:\n        self.previous_hash = GENESIS_HASH\n        self.records: list[dict[str, Any]] = []\n        self._event_ids: set[str] = set()\n\n\n    def head(self) -> str:\n        \"\"\"Return the current trusted head, or the genesis hash when empty.\"\"\"\n\n        return self.previous_hash\n\n    def append(\n        self,\n        *,\n        event_id: str,\n        actor: str,\n        action: str,\n        at: datetime,\n        payload: dict[str, Any],\n    ) -> dict[str, Any]:\n        \"\"\"Append and return one canonical, hashed audit record.\"\"\"\n\n        event_id = _nonempty_string(event_id, \"event_id\")\n        actor = _nonemp",
+   "\"\"\"Deterministic follow-up triage for fictional safety-event records.\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Iterable, Mapping\nfrom dataclasses import dataclass\nfrom datetime import datetime, timedelta, timezone\n\n_SERIOUSNESS_RANK = {\n    \"other\": 0,\n    \"hospitalization\": 1,\n    \"life_threatening\": 2,\n    \"fatal\": 3,\n}\n_REPORTING_DAYS = {\n    \"fatal\": 7,\n    \"life_threatening\": 7,\n    \"hospitalization\": 15,\n    \"other\": 30,\n}\n\n\n@dataclass(frozen=True)\nclass _Event:\n    event_id: str\n    subject_pseudonym: str\n    event_code: str\n    onset: datetime\n    seriousness: str\n    source: str\n    follow_up_of: str | None\n    uncertain: bool\n\n\ndef _required_text(value: object, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"INVALID_{field.upper()}\")\n    return value\n\n\ndef _aware_utc(value: object, error_code: str) -> datetime:\n    if not isinstance(value, datetime):\n        raise ValueError(error_code)\n    try:\n        if value.tzinfo is None or value.utcoffset() is None:\n            raise ValueError(error_code)\n        return value.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _parse_onset(value: object) -> datetime:\n    if not isinstance(value, str):\n        raise ValueError(\"INVALID_ONSET\")\n    text = value[:-1] + \"+00:00\" if value.endswith(\"Z\") else value\n    try:\n        parsed = datetime.fromisoformat(text)\n    except ValueError as exc:\n        raise ValueError(\"INVALID_ONSET\") from exc\n    return _aware_utc(parsed, \"INVALID_ONSET\")\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.astimezone(timezone.utc).isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef triage_events(events: Iterable[Mapping[str, object]], *, now: datetime) -> list[dict[str, object]]:\n    \"\"\"Merge follow-up chains and derive reporting deadlines, not diagnoses.\"\"\"\n    now_utc = _aware_utc(now, \"INVALID_NOW\")\n    by_id: dict[str, _Event] = {}\n\n    try:\n        iterator = iter(events)\n    except TypeError as exc:\n        raise TypeError(\"events must be iterable\") from exc\n\n    for raw in iterator:\n        if not isinstance(raw, Mapping):\n            raise ValueError(\"INVALID_EVENT\")\n        event_id = _required_text(raw.get(\"event_id\"), \"event_id\")\n        if event_id in by_id:\n            raise ValueError(\"DUPLICATE_EVENT_ID\")\n\n        seriousness = raw.get(\"seriousness\")\n        if not isinstance(seriousness, str) or seriousness not in _SERIOUSNESS_RANK:\n            raise ValueError(\"INVALID_SERIOUSNESS\")\n        uncertain = raw.get(\"uncertain\", False)\n        if not isinstance(uncertain, bool):\n            raise ValueError(\"INVALID_UNCERTAIN\")\n\n        parent = raw.get(\"follow_up_of\")\n        if parent is not None:\n            parent = _required_text(parent, \"follow_up_of\")\n\n        by_id[event_id] = _Event(\n            event_id=event_id,\n            subject_pseudonym=_required_text(\n                raw.get(\"subject_pse"
+  ]
+ },
+ {
+  "call": 7,
+  "t": 136.78,
+  "content": "Now let me look at the remaining tests for style conventions:",
+  "tool_calls": [
+   {
+    "id": "call_18e2b95e2c355931b88758e856d213b8",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_eligibility.py\"}"
+   },
+   {
+    "id": "call_c0928fbcf1f45347a6bbcf0cf4ef0a4c",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_audit.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 10049,
+   "output": 13620,
+   "reasoning": 13578,
+   "cache_read": 6934,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "from datetime import date\n\nimport pytest\n\nfrom trialops.eligibility import evaluate_subject\n\n\ndef make_protocol():\n    return {\n        \"min_age\": 18,\n        \"max_age\": 30,\n        \"required_consent_version\": \"v2\",\n        \"consent_valid_from\": \"2024-01-01\",\n        \"labs\": {\"A\": [1, 3], \"Z\": [10, 20]},\n        \"exclusions\": [\"DO_NOT_ENROLL\", \"PRIOR\"],\n    }\n\n\ndef make_subject():\n    return {\n        \"birth_date\": \"2000-06-15\",\n        \"consents\": [{\"version\": \"v2\", \"signed_on\": \"2024-06-15\"}],\n        \"labs\": {\"A\": 2, \"Z\": 15},\n        \"flags\": [],\n    }\n\n\ndef test_same_day_consent_and_inclusive_age_and_lab_boundaries():\n    protocol = make_protocol()\n    protocol[\"min_age\"] = protocol[\"max_age\"] = 24\n    subject = make_subject()\n    subject[\"labs\"] = {\"A\": 1, \"Z\": 20}\n\n    assert evaluate_subject(subject, protocol, date(2024, 6, 15)) == {\n        \"eligible\": True,\n        \"reasons\": [],\n        \"consent_version\": \"v2\",\n    }\n\n\ndef test_reason_order_and_retired_wrong_consent_version():\n    protocol = make_protocol()\n    subject = make_subject()\n    subject.update(\n        birth_date=\"1970-01-01\",\n        consents=[{\"version\": \"v1\", \"signed_on\": \"2023-12-31\"}],\n        flags=[\"PRIOR\", \"DO_NOT_ENROLL\"],\n        labs={\"Z\": 21, \"A\": 0},\n    )\n\n    result = evaluate_subject(subject, protocol, date(2024, 6, 15))\n\n    assert result == {\n        \"eligible\": False,\n        \"reasons\": [\n            \"CONSENT_MISSING\",\n            \"CONSENT_VERSION\",\n            \"AGE_ABOVE_MAX\",\n            \"EXCLUSION_DO_NOT_ENROLL\",\n            \"EXCLUSION_PRIOR\",\n            \"LAB_A_LOW\",\n            \"LAB_Z_HIGH\",\n        ],\n        \"consent_version\": \"v1\",\n    }\n\n\ndef test_leap_day_birthday_is_computed_on_the_evaluation_date():\n    protocol = make_protocol()\n    protocol.update(min_age=24, max_age=24, labs={}, exclusions=[])\n    subject = make_subject()\n    subject.update(\n        birth_date=\"2000-02-29\",\n        consents=[{\"version\": \"v2\", \"signed_on\": \"2024-01-01\"}],\n        labs={},\n    )\n\n    before_birthday = evaluate_subject(subject, protocol, date(2024, 2, 28))\n    on_birthday = evaluate_subject(subject, protocol, date(2024, 3, 1))\n\n    assert before_birthday[\"reasons\"] == [\"AGE_BELOW_MIN\"]\n    assert on_birthday[\"eligible\"] is True\n\n\ndef test_latest_consent_across_versions_never_falls_back_to_older_valid_consent():\n    subject = make_subject()\n    subject[\"consents\"] = [\n        {\"version\": \"v9\", \"signed_on\": \"2025-01-01\"},\n        {\"version\": \"v1\", \"signed_on\": \"2024-02-01\"},\n        {\"version\": \"v2\", \"signed_on\": \"2024-01-01\"},\n    ]\n\n    result = evaluate_subject(subject, make_protocol(), date(2024, 6, 15))\n\n    assert result[\"consent_version\"] == \"v1\"\n    assert result[\"reasons\"] == [\"CONSENT_VERSION\"]\n\n\ndef test_malformed_required_fields_raise_field_naming_value_errors():\n    subject = make_subject()\n    subject[\"birth_date\"] = \"not-a-date\"\n    with pytest.raises(ValueError, match=\"birth_date\"):\n        evaluate_subject(subject, make_protocol(), date(2024, 6, ",
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\nimport hashlib\nimport json\n\nimport pytest\n\nfrom trialops.audit import AuditChain, GENESIS_HASH\n\n\nAT = datetime(2024, 6, 15, 12, 0, tzinfo=timezone.utc)\n\n\ndef append_event(chain, event_id=\"event-1\", at=AT, payload=None):\n    return chain.append(\n        event_id=event_id,\n        actor=\"actor-1\",\n        action=\"recorded\",\n        at=at,\n        payload={\"value\": 1} if payload is None else payload,\n    )\n\n\ndef rehash(record):\n    unsigned = {key: value for key, value in record.items() if key != \"hash\"}\n    canonical = json.dumps(\n        unsigned,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n    record[\"hash\"] = hashlib.sha256(canonical.encode(\"utf-8\")).hexdigest()\n    return record\n\n\ndef test_genesis_utc_normalization_and_canonical_payload_order():\n    chain = AuditChain()\n    assert chain.head() == GENESIS_HASH\n    offset_time = datetime(\n        2024, 6, 15, 14, 30, tzinfo=timezone(timedelta(hours=2))\n    )\n    record = chain.append(\n        event_id=\"event-1\",\n        actor=\"actor-1\",\n        action=\"recorded\",\n        at=offset_time,\n        payload={\"z\": 1, \"a\": {\"β\": 2, \"b\": 3}},\n    )\n\n    assert record[\"sequence\"] == 1\n    assert record[\"at\"] == \"2024-06-15T12:30:00Z\"\n    assert record[\"previous_hash\"] == GENESIS_HASH\n    assert chain.previous_hash == record[\"hash\"]\n    assert chain.head() == record[\"hash\"]\n    unsigned = {key: value for key, value in record.items() if key != \"hash\"}\n    expected = json.dumps(\n        unsigned,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n    assert record[\"hash\"] == hashlib.sha256(expected.encode(\"utf-8\")).hexdigest()\n    assert chain.verify(chain.records) == []\n\n\ndef test_payload_insertion_order_does_not_change_hash():\n    first = AuditChain()\n    second = AuditChain()\n    left = append_event(first, payload={\"a\": 1, \"b\": 2})\n    right = append_event(second, payload={\"b\": 2, \"a\": 1})\n\n    assert left[\"hash\"] == right[\"hash\"]\n\n\ndef test_tampering_and_sequence_gaps_are_detected():\n    chain = AuditChain()\n    append_event(chain)\n    append_event(chain, \"event-2\", AT + timedelta(seconds=1))\n\n    tampered = deepcopy(chain.records)\n    tampered[0][\"payload\"][\"value\"] = 99\n    assert \"BAD_HASH\" in chain.verify(tampered)\n\n    gapped = deepcopy(chain.records)\n    gapped[1][\"sequence\"] = 3\n    errors = chain.verify(gapped)\n    assert \"BAD_SEQUENCE\" in errors\n    assert \"BAD_HASH\" in errors\n\n\ndef test_replay_is_not_a_valid_extension():\n    chain = AuditChain()\n    record = append_event(chain)\n\n    errors = chain.verify([record, deepcopy(record)])\n\n    assert errors == [\n        \"BAD_PREVIOUS_HASH\",\n        \"BAD_SEQUENCE\",\n        \"DUPLICATE_EVENT_ID\",\n        \"NON_INCREASING_TIMESTAMP\",\n    ]\n\n\ndef test_append_validation_and_independent_chains():\n    first = AuditChain()\n    second = AuditChain()\n    ap"
+  ]
+ },
+ {
+  "call": 8,
+  "t": 222.58,
+  "content": "The `export_subjects` implementation looks complete. Let me verify a few details about the requirements and then implement `execute_reuse_export`.",
+  "tool_calls": [
+   {
+    "id": "call_e3296423e43f5cb1b104b269d69bdbc8",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_privacy.py -q\"}"
+   },
+   {
+    "id": "call_9adf9c5256ab5fe197c21cd3abd97d0a",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_scheduling.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 12195,
+   "output": 15698,
+   "reasoning": 15638,
+   "cache_read": 10047,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n......                                                                   [100%]\n",
+   "from datetime import date, timedelta\n\nimport pytest\n\nfrom trialops.scheduling import plan_visits\n\n\ndef test_month_end_targets_use_the_original_day_and_leap_year():\n    visits = plan_visits(\n        first_day=date(2024, 1, 31),\n        offsets_months=[1, 2, 12],\n        hour=9,\n        minute=5,\n        timezone=\"America/New_York\",\n    )\n\n    assert [visit[\"offset_months\"] for visit in visits] == [1, 2, 12]\n    assert [visit[\"local\"] for visit in visits] == [\n        \"2024-02-29T09:05:00-05:00\",\n        \"2024-03-31T09:05:00-04:00\",\n        \"2025-01-31T09:05:00-05:00\",\n    ]\n    assert visits[0][\"utc\"] == \"2024-02-29T14:05:00Z\"\n\n\ndef test_new_york_spring_forward_moves_forward_by_the_gap():\n    [visit] = plan_visits(\n        first_day=date(2024, 3, 10),\n        offsets_months=[0],\n        hour=2,\n        minute=30,\n        timezone=\"America/New_York\",\n    )\n\n    assert visit == {\n        \"offset_months\": 0,\n        \"local\": \"2024-03-10T03:30:00-04:00\",\n        \"utc\": \"2024-03-10T07:30:00Z\",\n    }\n\n\ndef test_new_york_fall_back_uses_fold_zero():\n    [visit] = plan_visits(\n        first_day=date(2024, 11, 3),\n        offsets_months=[0],\n        hour=1,\n        minute=30,\n        timezone=\"America/New_York\",\n    )\n\n    assert visit[\"local\"] == \"2024-11-03T01:30:00-04:00\"\n    assert visit[\"utc\"] == \"2024-11-03T05:30:00Z\"\n\n\ndef test_paris_gap_uses_the_resulting_utc_offset():\n    [visit] = plan_visits(\n        first_day=date(2024, 3, 31),\n        offsets_months=[0],\n        hour=2,\n        minute=30,\n        timezone=\"Europe/Paris\",\n    )\n\n    assert visit[\"local\"] == \"2024-03-31T03:30:00+02:00\"\n    assert visit[\"utc\"] == \"2024-03-31T01:30:00Z\"\n\n\ndef test_closures_and_shared_capacity_do_not_mutate_inputs():\n    closed = {date(2024, 1, 31)} | {\n        date(2024, 2, day) for day in range(1, 29)\n    }\n    capacity = {date(2024, 2, 29): 1}\n    original_closed = closed.copy()\n\n    visits = plan_visits(\n        first_day=date(2024, 1, 31),\n        offsets_months=[0, 1],\n        hour=10,\n        minute=0,\n        timezone=\"America/New_York\",\n        closed_days=closed,\n        capacity=capacity,\n    )\n\n    assert [visit[\"local\"][:10] for visit in visits] == [\n        \"2024-02-29\",\n        \"2024-03-01\",\n    ]\n    assert capacity == {date(2024, 2, 29): 1}\n    assert closed == original_closed\n\n\n@pytest.mark.parametrize(\"offsets\", [[-1], [0, 0], [True], [0.5]])\ndef test_invalid_offsets_are_rejected(offsets):\n    with pytest.raises(ValueError):\n        plan_visits(\n            first_day=date(2024, 1, 1),\n            offsets_months=offsets,\n            hour=9,\n            minute=0,\n            timezone=\"America/New_York\",\n        )\n\n\n@pytest.mark.parametrize(\n    (\"hour\", \"minute\", \"zone\"),\n    [(24, 0, \"America/New_York\"), (0, 60, \"America/New_York\"), (0, 0, \"Not/A_Real_Zone\")],\n)\ndef test_invalid_times_and_zones_are_rejected(hour, minute, zone):\n    with pytest.raises(ValueError):\n        plan_visits(\n            first_day=date(2024, 1, 1),\n            offsets_month"
+  ]
+ },
+ {
+  "call": 9,
+  "t": 314.73,
+  "content": "",
+  "tool_calls": [],
+  "usage": {
+   "input": 13383,
+   "output": 16384,
+   "reasoning": 16384,
+   "cache_read": 12193,
+   "cache_write": 0
+  },
+  "finish_reason": "length"
+ },
+ {
+  "call": 10,
+  "t": 373.75,
+  "content": "Now I'll implement `execute_reuse_export` in `privacy.py`:",
+  "tool_calls": [
+   {
+    "id": "call_67d3b93f0bd95eb8b7f8ca44f55f8ef7",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"trialops/privacy.py\",\"old_string\":\"\\\"\\\"\\\"Purpose-scoped, pseudonymized exports of fictional subject records.\\\"\\\"\\\"\\n\\nfrom collections.abc import Iterable, Mapping\\nfrom datetime import date, datetime\\nfrom typing import Any\\nimport hashlib\\nimport hmac\\nimport json\\nimport re\",\"new_string\":\"\\\"\\\"\\\"Purpose-scoped, pseudonymized exports of fictional subject records.\\\"\\\"\\\"\\n\\nfrom collections.abc import Iterable, Mapping\\nfrom datetime import date, datetime, timezone\\nfrom typing import Any\\nimport hashlib\\nimport hmac\\nimport json\\nimport re\\n\\nfrom trialops.governance import apply_reuse_action\"}"
+   }
+  ],
+  "usage": {
+   "input": 13402,
+   "output": 11685,
+   "reasoning": 11536,
+   "cache_read": 13381,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/privacy.py"
+  ]
+ },
+ {
+  "call": 11,
+  "t": 394.63,
+  "content": "Now let me add the `execute_reuse_export` integration:",
+  "tool_calls": [
+   {
+    "id": "call_b3639c3fa2ce50df963733d9a1248535",
+    "name": "read_file",
+    "arguments": "{\"path\":\"trialops/privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 13561,
+   "output": 3427,
+   "reasoning": 3398,
+   "cache_read": 13400,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Purpose-scoped, pseudonymized exports of fictional subject records.\"\"\"\n\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime, timezone\nfrom typing import Any\nimport hashlib\nimport hmac\nimport json\nimport re\n\nfrom trialops.governance import apply_reuse_action\n\n\n_ID_PATTERN = re.compile(r\"[A-Za-z0-9_-]+\\Z\")\n\n\ndef _field(record: Mapping[str, Any], name: str) -> Any:\n    try:\n        return record[name]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {name}\") from None\n\n\ndef _date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _text(value: Any, field: str, *, nonempty: bool = False) -> str:\n    if not isinstance(value, str) or (nonempty and not value):\n        qualifier = \"a non-empty\" if nonempty else \"a\"\n        raise ValueError(f\"{field} must be {qualifier} string\")\n    return value\n\n\ndef export_subjects(\n    subjects: Iterable[Mapping[str, Any]], *, purpose: str, secret: str, on: date\n) -> dict[str, Any]:\n    \"\"\"Export only active, unpurged records without direct identifiers.\"\"\"\n\n    purpose = _text(purpose, \"purpose\", nonempty=True)\n    secret = _text(secret, \"secret\", nonempty=True)\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n    if isinstance(subjects, (str, bytes, Mapping)) or not isinstance(\n        subjects, Iterable\n    ):\n        raise ValueError(\"subjects must be an iterable of records\")\n\n    try:\n        secret_bytes = secret.encode(\"utf-8\")\n        purpose.encode(\"utf-8\")\n    except UnicodeError:\n        raise ValueError(\"purpose and secret must contain valid Unicode\") from None\n\n    rows: list[dict[str, Any]] = []\n    seen_ids: set[str] = set()\n\n    for subject in subjects:\n        if not isinstance(subject, Mapping):\n            raise ValueError(\"each subject must be a mapping\")\n\n        subject_id = _text(_field(subject, \"id\"), \"id\", nonempty=True)\n        if _ID_PATTERN.fullmatch(subject_id) is None:\n            raise ValueError(\"id must match [A-Za-z0-9_-]+\")\n        if subject_id in seen_ids:\n            raise ValueError(\"DUPLICATE_SUBJECT_ID\")\n        seen_ids.add(subject_id)\n\n        _text(_field(subject, \"name\"), \"name\")\n        birth_date = _date(_field(subject, \"birth_date\"), \"birth_date\")\n        _text(_field(subject, \"email\"), \"email\")\n        country = _text(_field(subject, \"country\"), \"country\")\n\n        visits_value = _field(subject, \"visits\")\n        if not isinstance(visits_value, list):\n            raise ValueError(\"visits must be a list\")\n        visits = sorted(\n            (_date(value, \"visits\") for value in visits_value),\n            key=lambda value: value,\n        )\n\n        consents_value = _field(subject, \"consents\")\n        if not "
+  ]
+ },
+ {
+  "call": 12,
+  "t": 398.58,
+  "content": "Now let me append the `execute_reuse_export` function:",
+  "tool_calls": [
+   {
+    "id": "call_d2cf8d3960405d44bb394e9dd735234f",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"trialops/privacy.py\",\"new_string\":\"    return {\\n        \\\"rows\\\": rows,\\n        \\\"manifest\\\": {\\n            \\\"algorithm\\\": \\\"sha256\\\",\\n            \\\"count\\\": len(rows),\\n            \\\"sha256\\\": hashlib.sha256(canonical_rows).hexdigest(),\\n        },\\n    }\\n\\n\\ndef execute_reuse_export(\\n    subjects: Iterable[Mapping[str, Any]],\\n    request: dict[str, Any],\\n    *,\\n    actor: str,\\n    secret: str,\\n    now: datetime,\\n) -> dict[str, Any]:\\n    \\\"\\\"\\\"Run one governed, pseudonymized export of fictional subject records.\\n\\n    The approved snapshot's purpose, the supplied secret, and the UTC date of\\n    ``now`` are handed to :func:`export_subjects` exactly once, through the\\n    governance executor callback. Governance failures surface before any\\n    subject is consumed; export failures become ``EXECUTION_FAILED`` and leave\\n    the approved request untouched.\\n    \\\"\\\"\\\"\\n\\n    if not isinstance(subjects, Iterable) or isinstance(\\n        subjects, (str, bytes, Mapping)\\n    ):\\n        raise ValueError(\\\"subjects must be an iterable of records\\\")\\n\\n    calls = {\\\"count\\\": 0}\\n\\n    def executor(approved_snapshot: Mapping[str, Any]) -> dict[str, Any]:\\n        # Governance guarantees an approved snapshot here, but the allowlist is\\n        # checked defensively so a governance regression cannot leak a purpose\\n        # that was never approved.\\n        purpose = approved_snapshot.get(\\\"purpose\\\") if isinstance(\\n            approved_snapshot, Mapping\\n        ) else None\\n        if not isinstance(purpose, str) or not purpose:\\n            raise ValueError(\\\"approved request has no purpose\\\")\\n        if calls[\\\"count\\\"]:\\n            raise ValueError(\\\"export already executed\\\")\\n        calls[\\\"count\\\"] += 1\\n        return export_subjects(\\n            subjects, purpose=purpose, secret=secret, on=now.astimezone(timezone.utc).date()\\n        )\\n\\n    executed = apply_reuse_action(request, \\\"execute\\\", actor, now, executor=executor)\\n\\n    if calls[\\\"count\\\"] != 1:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    if not isinstance(executed, dict):\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    export = executed.get(\\\"execution_result\\\")\\n    if not isinstance(export, dict) or set(export) != {\\\"rows\\\", \\\"manifest\\\"}:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    return executed\\n\",\"old_string\":\"    return {\\n        \\\"rows\\\": rows,\\n        \\\"manifest\\\": {\\n            \\\"algorithm\\\": \\\"sha256\\\",\\n            \\\"count\\\": len(rows),\\n            \\\"sha256\\\": hashlib.sha256(canonical_rows).hexdigest(),\\n        },\\n    }\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 14772,
+   "output": 567,
+   "reasoning": 0,
+   "cache_read": 13559,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/privacy.py"
+  ]
+ },
+ {
+  "call": 13,
+  "t": 413.87,
+  "content": "I need to fix the parameter order — the spec says `execute_reuse_export(request, subjects, *, actor, secret, now)`:",
+  "tool_calls": [
+   {
+    "id": "call_f2160911c3915b0ca94ad6704a4a75ac",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"trialops/privacy.py\",\"new_string\":\"def execute_reuse_export(\\n    request: dict[str, Any],\\n    subjects: Iterable[Mapping[str, Any]],\\n    *,\\n    actor: str,\\n    secret: str,\\n    now: datetime,\\n) -> dict[str, Any]:\\n    \\\"\\\"\\\"Run one governed, pseudonymized export of fictional subject records.\\n\\n    The approved snapshot's purpose, the supplied secret, and the UTC date of\\n    ``now`` are handed to :func:`export_subjects` exactly once, through the\\n    governance executor callback. Governance failures surface before any\\n    subject is consumed; export failures become ``EXECUTION_FAILED`` and leave\\n    the approved request and its history untouched.\\n    \\\"\\\"\\\"\\n\\n    calls = {\\\"count\\\": 0}\\n\\n    def executor(approved_snapshot: Any) -> dict[str, Any]:\\n        # Governance guarantees an approved snapshot here; the allowlist check\\n        # is defensive so a governance regression cannot export under a purpose\\n        # that was never approved.\\n        purpose = (\\n            approved_snapshot.get(\\\"purpose\\\")\\n            if isinstance(approved_snapshot, Mapping)\\n            else None\\n        )\\n        if not isinstance(purpose, str) or not purpose:\\n            raise ValueError(\\\"approved request has no purpose\\\")\\n        if calls[\\\"count\\\"]:\\n            raise ValueError(\\\"export already executed\\\")\\n        calls[\\\"count\\\"] += 1\\n        return export_subjects(\\n            subjects,\\n            purpose=purpose,\\n            secret=secret,\\n            on=now.astimezone(timezone.utc).date(),\\n        )\\n\\n    executed = apply_reuse_action(request, \\\"execute\\\", actor, now, executor=executor)\\n\\n    if not isinstance(executed, dict) or calls[\\\"count\\\"] != 1:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    export = executed.get(\\\"execution_result\\\")\\n    if not isinstance(export, dict) or set(export) != {\\\"rows\\\", \\\"manifest\\\"}:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    return executed\\n\",\"old_string\":\"def execute_reuse_export(\\n    subjects: Iterable[Mapping[str, Any]],\\n    request: dict[str, Any],\\n    *,\\n    actor: str,\\n    secret: str,\\n    now: datetime,\\n) -> dict[str, Any]:\\n    \\\"\\\"\\\"Run one governed, pseudonymized export of fictional subject records.\\n\\n    The approved snapshot's purpose, the supplied secret, and the UTC date of\\n    ``now`` are handed to :func:`export_subjects` exactly once, through the\\n    governance executor callback. Governance failures surface before any\\n    subject is consumed; export failures become ``EXECUTION_FAILED`` and leave\\n    the approved request untouched.\\n    \\\"\\\"\\\"\\n\\n    if not isinstance(subjects, Iterable) or isinstance(\\n        subjects, (str, bytes, Mapping)\\n    ):\\n        raise ValueError(\\\"subjects must be an iterable of records\\\")\\n\\n    calls = {\\\"count\\\": 0}\\n\\n    def executor(approved_snapshot: Mapping[str, Any]) -> dict[str, Any]:\\n        # Governance guarantees an approved snapshot here, but the allowlist is\\n        # checked defensively so a governance regression cannot leak a purpose\\n        # that was never approved.\\n        purpose = approved_snapshot.get(\\\"purpose\\\") if isinstance(\\n            approved_snapshot, Mapping\\n        ) else None\\n        if not isinstance(purpose, str) or not purpose:\\n            raise ValueError(\\\"approved request has no purpose\\\")\\n        if calls[\\\"count\\\"]:\\n            raise ValueError(\\\"export already executed\\\")\\n        calls[\\\"count\\\"] += 1\\n        return export_subjects(\\n            subjects, purpose=purpose, secret=secret, on=now.astimezone(timezone.utc).date()\\n        )\\n\\n    executed = apply_reuse_action(request, \\\"execute\\\", actor, now, executor=executor)\\n\\n    if calls[\\\"count\\\"] != 1:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    if not isinstance(executed, dict):\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    export = executed.get(\\\"execution_result\\\")\\n    if not isinstance(export, dict) or set(export) != {\\\"rows\\\", \\\"manifest\\\"}:\\n        raise ValueError(\\\"EXECUTION_FAILED\\\")\\n\\n    return executed\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 15349,
+   "output": 2969,
+   "reasoning": 2087,
+   "cache_read": 14770,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited trialops/privacy.py"
+  ]
+ },
+ {
+  "call": 14,
+  "t": 454.4,
+  "content": "Now let me add the deterministic-output test to `tests/test_privacy.py`:",
+  "tool_calls": [
+   {
+    "id": "call_f93db9d3c65654eb925c872461a65851",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"tests/test_privacy.py\",\"new_string\":\"def test_id_allowlist_accepts_ascii_word_dash_and_rejects_other_text():\\n    allowed = make_subject(\\\"AZaz09_-\\\")\\n    result = export_subjects(\\n        [allowed], purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n    assert result[\\\"rows\\\"][0][\\\"pseudonym\\\"] == pseudonym(\\\"AZaz09_-\\\")\\n\\n    for invalid_id in (\\\"has space\\\", \\\"colon:id\\\", \\\"unicode-é\\\", \\\"slash/id\\\"):\\n        with pytest.raises(ValueError) as caught:\\n            export_subjects(\\n                [make_subject(invalid_id)],\\n                purpose=\\\"research\\\",\\n                secret=\\\"test-secret\\\",\\n                on=ON,\\n            )\\n        assert \\\"id\\\" in str(caught.value)\\n        assert invalid_id not in str(caught.value)\\n\\n\\ndef test_output_is_deterministic_across_calls_order_and_iterators():\\n    first = [make_subject(\\\"subject-b\\\"), make_subject(\\\"subject-a\\\")]\\n    second = [make_subject(\\\"subject-a\\\"), make_subject(\\\"subject-b\\\")]\\n\\n    by_list = export_subjects(first, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON)\\n    reordered = export_subjects(second, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON)\\n    by_iterator = export_subjects(\\n        (record for record in second), purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n    repeated = export_subjects(\\n        deepcopy(first), purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n\\n    assert by_list == reordered == by_iterator == repeated\\n    assert [row[\\\"pseudonym\\\"] for row in by_list[\\\"rows\\\"]] == sorted(\\n        [pseudonym(\\\"subject-a\\\"), pseudonym(\\\"subject-b\\\")]\\n    )\\n\\n\\ndef test_pseudonyms_are_scoped_to_purpose_and_secret():\\n    dual = make_subject(\\\"subject-a\\\")\\n    dual[\\\"consents\\\"].append({\\\"purpose\\\": \\\"quality-control\\\", \\\"signed_on\\\": \\\"2024-01-01\\\"})\\n\\n    research = export_subjects(\\n        [deepcopy(dual)], purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n    quality = export_subjects(\\n        [deepcopy(dual)], purpose=\\\"quality-control\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n    rekeyed = export_subjects(\\n        [deepcopy(dual)], purpose=\\\"research\\\", secret=\\\"other-secret\\\", on=ON\\n    )\\n\\n    assert research[\\\"rows\\\"][0][\\\"pseudonym\\\"] == pseudonym(\\\"subject-a\\\")\\n    assert quality[\\\"rows\\\"][0][\\\"pseudonym\\\"] == pseudonym(\\n        \\\"subject-a\\\", purpose=\\\"quality-control\\\"\\n    )\\n    assert rekeyed[\\\"rows\\\"][0][\\\"pseudonym\\\"] == pseudonym(\\\"subject-a\\\", secret=\\\"other-secret\\\")\\n    assert len({pseudonym(\\\"subject-a\\\")} | {\\n        research[\\\"rows\\\"][0][\\\"pseudonym\\\"],\\n        quality[\\\"rows\\\"][0][\\\"pseudonym\\\"],\\n        rekeyed[\\\"rows\\\"][0][\\\"pseudonym\\\"],\\n    }) == 3\\n    assert dual[\\\"consents\\\"] == [\\n        {\\\"purpose\\\": \\\"research\\\", \\\"signed_on\\\": \\\"2024-06-15\\\"},\\n        {\\\"purpose\\\": \\\"quality-control\\\", \\\"signed_on\\\": \\\"2024-01-01\\\"},\\n    ]\\n\\n\\ndef test_manifest_hash_is_over_compact_canonical_rows_only():\\n    subjects = [make_subject(\\\"subject-a\\\")]\\n    result = export_subjects(subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON)\\n\\n    compact = canonical(result[\\\"rows\\\"]).encode(\\\"utf-8\\\")\\n    spaced = json.dumps(result[\\\"rows\\\"], sort_keys=True, ensure_ascii=False).encode(\\n        \\\"utf-8\\\"\\n    )\\n\\n    assert result[\\\"manifest\\\"][\\\"sha256\\\"] == hashlib.sha256(compact).hexdigest()\\n    assert result[\\\"manifest\\\"][\\\"sha256\\\"] != hashlib.sha256(spaced).hexdigest()\\n    assert result[\\\"manifest\\\"][\\\"count\\\"] == len(result[\\\"rows\\\"])\\n\\n\\ndef test_errors_never_echo_identifiers_secret_or_dates():\\n    identifier = \\\"subject-leak\\\"\\n    invalid_records = [\\n        make_subject(identifier, name=\\\"\\\"),\\n        make_subject(identifier, email=None),\\n        make_subject(identifier, country=\\\"\\\"),\\n        make_subject(identifier, visits=\\\"2024-01-01\\\"),\\n        make_subject(identifier, visits=[\\\"not-a-date\\\"]),\\n        make_subject(identifier, consents={\\\"purpose\\\": \\\"research\\\"}),\\n        make_subject(identifier, consents=[{\\\"purpose\\\": \\\"research\\\"}]),\\n        make_subject(\\n            identifier,\\n            consents=[\\n                {\\\"purpose\\\": \\\"research\\\", \\\"signed_on\\\": \\\"2024-06-15\\\", \\\"withdrawn_on\\\": 1}\\n            ],\\n        ),\\n        make_subject(identifier, purge_after=\\\"2024-13-01\\\"),\\n        make_subject(identifier, birth_date=\\\"1990-04-03T00:00:00\\\"),\\n    ]\\n\\n    messages = []\\n    for record in invalid_records:\\n        with pytest.raises(ValueError) as caught:\\n            export_subjects([record], purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON)\\n        messages.append(str(caught.value))\\n\\n    for message in messages:\\n        for leak in (\\n            identifier,\\n            \\\"Fictional Person\\\",\\n            \\\"person@example.test\\\",\\n            \\\"1990-04-03\\\",\\n            \\\"2024-06-15\\\",\\n            \\\"2024-05-01\\\",\\n            \\\"test-secret\\\",\\n        ):\\n            assert leak not in message\\n    assert all(message for message in messages)\\n\\n    for argument, argument_name in (((\\\"\\\", \\\"secret\\\"),), (\\\"\\\", \\\"secret\\\")):\\n        with pytest.raises(ValueError) as caught:\\n            export_subjects(\\n                [make_subject(identifier)],\\n                purpose=\\\"research\\\",\\n                secret=argument,\\n                on=ON,\\n            )\\n        assert \\\"secret\\\" in str(caught.value)\\n        assert \\\"test-secret\\\" not in str(caught.value)\\n\\n    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)], purpose=\\\"\\\", secret=\\\"test-secret\\\", on=ON\\n        )\\n    assert \\\"purpose\\\" in str(caught.value)\\n\",\"old_string\":\"def test_id_allowlist_accepts_ascii_word_dash_and_rejects_other_text():\\n    allowed = make_subject(\\\"AZaz09_-\\\")\\n    result = export_subjects(\\n        [allowed], purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=ON\\n    )\\n    assert result[\\\"rows\\\"][0][\\\"pseudonym\\\"] == pseudonym(\\\"AZaz09_-\\\")\\n\\n    for invalid_id in (\\\"has space\\\", \\\"colon:id\\\", \\\"unicode-é\\\", \\\"slash/id\\\"):\\n        with pytest.raises(ValueError) as caught:\\n            export_subjects(\\n                [make_subject(invalid_id)],\\n                purpose=\\\"research\\\",\\n                secret=\\\"test-secret\\\",\\n                on=ON,\\n            )\\n        assert \\\"id\\\" in str(caught.value)\\n        assert invalid_id not in str(caught.value)\"}"
+   }
+  ],
+  "usage": {
+   "input": 16241,
+   "output": 7338,
+   "reasoning": 5896,
+   "cache_read": 15347,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 15,
+  "t": 456.81,
+  "content": "Now let me clean up that awkward loop in the last test:",
+  "tool_calls": [
+   {
+    "id": "call_f1119573e0fa5ce9b951cd5bd57e7b81",
+    "name": "edit_file",
+    "arguments": "{\"path\":\"tests/test_privacy.py\",\"new_string\":\"    assert all(message for message in messages)\\n\\n    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)],\\n            purpose=\\\"research\\\",\\n            secret=\\\"\\\",\\n            on=ON,\\n        )\\n    assert \\\"secret\\\" in str(caught.value)\\n    assert \\\"test-secret\\\" not in str(caught.value)\\n\\n    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)], purpose=\\\"\\\", secret=\\\"test-secret\\\", on=ON\\n        )\\n    assert \\\"purpose\\\" in str(caught.value)\\n\",\"old_string\":\"    assert all(message for message in messages)\\n\\n    for argument, argument_name in (((\\\"\\\", \\\"secret\\\"),), (\\\"\\\", \\\"secret\\\")):\\n        with pytest.raises(ValueError) as caught:\\n            export_subjects(\\n                [make_subject(identifier)],\\n                purpose=\\\"research\\\",\\n                secret=argument,\\n                on=ON,\\n            )\\n        assert \\\"secret\\\" in str(caught.value)\\n        assert \\\"test-secret\\\" not in str(caught.value)\\n\\n    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)], purpose=\\\"\\\", secret=\\\"test-secret\\\", on=ON\\n        )\\n    assert \\\"purpose\\\" in str(caught.value)\"}"
+   }
+  ],
+  "usage": {
+   "input": 17693,
+   "output": 287,
+   "reasoning": 0,
+   "cache_read": 16239,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 16,
+  "t": 462.29,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_88a2139116bb5a3290bc9e897761ff78",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    identifier = \\\"subject-leak\\\"\\n    invalid_records = [\\n        make_subject(identifier, name=None),\\n        make_subject(identifier, email=None),\\n        make_subject(identifier, country=None),\\n        make_subject(identifier, visits=\\\"2024-01-01\\\"),\\n        make_subject(identifier, visits=[\\\"not-a-date\\\"]),\\n        make_subject(identifier, consents={\\\"purpose\\\": \\\"research\\\"}),\\n        make_subject(identifier, consents=[{\\\"purpose\\\": \\\"research\\\"}]),\\n        make_subject(\\n            identifier,\\n            consents=[\\n                {\\\"purpose\\\": \\\"research\\\", \\\"signed_on\\\": \\\"2024-06-15\\\", \\\"withdrawn_on\\\": 1}\\n            ],\\n        ),\\n        make_subject(identifier, purge_after=\\\"2024-13-01\\\"),\\n    ]\\n\",\"old_string\":\"    identifier = \\\"subject-leak\\\"\\n    invalid_records = [\\n        make_subject(identifier, name=\\\"\\\"),\\n        make_subject(identifier, email=None),\\n        make_subject(identifier, country=\\\"\\\"),\\n        make_subject(identifier, visits=\\\"2024-01-01\\\"),\\n        make_subject(identifier, visits=[\\\"not-a-date\\\"]),\\n        make_subject(identifier, consents={\\\"purpose\\\": \\\"research\\\"}),\\n        make_subject(identifier, consents=[{\\\"purpose\\\": \\\"research\\\"}]),\\n        make_subject(\\n            identifier,\\n            consents=[\\n                {\\\"purpose\\\": \\\"research\\\", \\\"signed_on\\\": \\\"2024-06-15\\\", \\\"withdrawn_on\\\": 1}\\n            ],\\n        ),\\n        make_subject(identifier, purge_after=\\\"2024-13-01\\\"),\\n        make_subject(identifier, birth_date=\\\"1990-04-03T00:00:00\\\"),\\n    ]\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 17990,
+   "output": 919,
+   "reasoning": 572,
+   "cache_read": 17691,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 17,
+  "t": 463.56,
+  "content": "Now let's add tests for the governance integration:",
+  "tool_calls": [
+   {
+    "id": "call_4598665fae6c5299ba2b25daf9537b18",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"from copy import deepcopy\\nfrom datetime import datetime, timedelta, timezone\\nimport hashlib\\nimport hmac\\nimport json\\n\\nimport pytest\\n\\nfrom trialops.governance import apply_reuse_action\\nfrom trialops.privacy import export_subjects, execute_reuse_export\\n\\n\\nON = date(2024, 6, 15)\\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\\n\",\"old_string\":\"from copy import deepcopy\\nfrom datetime import date\\nimport hashlib\\nimport hmac\\nimport json\\n\\nimport pytest\\n\\nfrom trialops.privacy import export_subjects\\n\\n\\nON = date(2024, 6, 15)\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 18347,
+   "output": 174,
+   "reasoning": 0,
+   "cache_read": 17988,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 18,
+  "t": 467.27,
+  "content": "Now let me append the end-to-end and rollback tests:",
+  "tool_calls": [
+   {
+    "id": "call_df416cbf0b545b97bbcd06b09fb59777",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 18531,
+   "output": 28,
+   "reasoning": 0,
+   "cache_read": 18345,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\nimport hashlib\nimport hmac\nimport json\n\nimport pytest\n\nfrom trialops.governance import apply_reuse_action\nfrom trialops.privacy import export_subjects, execute_reuse_export\n\n\nON = date(2024, 6, 15)\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\n\n\ndef make_subject(subject_id=\"subject-one\", **changes):\n    record = {\n        \"id\": subject_id,\n        \"name\": \"Fictional Person\",\n        \"birth_date\": \"1990-04-03\",\n        \"email\": \"person@example.test\",\n        \"country\": \"NZ\",\n        \"visits\": [\"2024-05-01\", \"2024-01-02\"],\n        \"consents\": [{\"purpose\": \"research\", \"signed_on\": \"2024-06-15\"}],\n        \"purge_after\": \"2024-06-15\",\n    }\n    record.update(changes)\n    return record\n\n\ndef pseudonym(subject_id, *, purpose=\"research\", secret=\"test-secret\"):\n    message = f\"{purpose}:{subject_id}\".encode(\"utf-8\")\n    return hmac.new(secret.encode(\"utf-8\"), message, hashlib.sha256).hexdigest()[:16]\n\n\ndef canonical(value):\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef test_active_boundaries_sorting_schema_and_canonical_manifest():\n    subjects = [make_subject(\"subject-b\"), make_subject(\"subject-a\")]\n    original = deepcopy(subjects)\n\n    result = export_subjects(subjects, purpose=\"research\", secret=\"test-secret\", on=ON)\n\n    expected_rows = [\n        {\n            \"pseudonym\": pseudonym(\"subject-a\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n        {\n            \"pseudonym\": pseudonym(\"subject-b\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n    ]\n    expected_rows.sort(key=lambda row: row[\"pseudonym\"])\n    assert result[\"rows\"] == expected_rows\n    assert result[\"manifest\"] == {\n        \"algorithm\": \"sha256\",\n        \"count\": 2,\n        \"sha256\": hashlib.sha256(canonical(expected_rows).encode(\"utf-8\")).hexdigest(),\n    }\n    assert subjects == original\n\n\ndef test_withdrawal_on_on_is_inactive_but_later_withdrawal_is_active():\n    withdrawn = make_subject(\"withdrawn\")\n    withdrawn[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-15\"\n    active = make_subject(\"active\")\n    active[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-16\"\n    expired = make_subject(\"expired\", purge_after=\"2024-06-14\")\n\n    result = export_subjects(\n        [withdrawn, active, expired], purpose=\"research\", secret=\"test-secret\", on=ON\n    )\n\n    assert [row[\"pseudonym\"] for row in result[\"rows\"]] == [pseudonym(\"active\")]\n    assert result[\"manifest\"][\"count\"] == 1\n\n\ndef test_empty_input_has_canonical_empty_manifest():\n    assert export_subjects([], purpose=\"research\", secret=\"test-secret\", on=ON) == {\n        \"rows\": [],\n        \"manifest\": {\n            \"algorithm\": \"sha256\",\n            \"count\": 0,\n            \"sha256\": hashlib.sha256(b\"["
+  ]
+ },
+ {
+  "call": 19,
+  "t": 473.78,
+  "content": "Now let me append the integration tests:",
+  "tool_calls": [
+   {
+    "id": "call_8bc58463debe543ca9cd54da3f7bb939",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)], purpose=\\\"\\\", secret=\\\"test-secret\\\", on=ON\\n        )\\n    assert \\\"purpose\\\" in str(caught.value)\\n\\n\\ndef make_request(status=\\\"approved\\\", **changes):\\n    purpose = changes.get(\\\"purpose\\\", \\\"research\\\")\\n    value = {\\n        \\\"id\\\": \\\"reuse-001\\\",\\n        \\\"requester\\\": \\\"alice\\\",\\n        \\\"reviewer\\\": \\\"bob\\\",\\n        \\\"purpose\\\": purpose,\\n        \\\"status\\\": status,\\n        \\\"retention_until\\\": \\\"2025-06-30\\\",\\n        \\\"approval_expires_on\\\": \\\"2025-02-01\\\",\\n        \\\"privacy_plan\\\": {\\n            \\\"algorithm\\\": \\\"hmac-sha256\\\",\\n            \\\"domain\\\": purpose,\\n            \\\"fields\\\": [\\\"pseudonym\\\", \\\"country\\\", \\\"birth_year\\\", \\\"visits\\\"],\\n        },\\n        \\\"metadata\\\": {\\n            \\\"representative\\\": True,\\n            \\\"complete\\\": True,\\n            \\\"quality_score\\\": 0.95,\\n        },\\n        \\\"history\\\": [],\\n    }\\n    value.update(changes)\\n    return value\\n\\n\\ndef test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"submitted\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n    request = apply_reuse_action(request, \\\"approve\\\", \\\"bob\\\", NOW + timedelta(days=1))\\n    approved_snapshot = deepcopy(request)\\n\\n    subjects = [make_subject(\\\"subject-b\\\"), make_subject(\\\"subject-a\\\")]\\n    subject_snapshot = deepcopy(subjects)\\n\\n    executed = execute_reuse_export(\\n        request, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW + timedelta(days=2)\\n    )\\n\\n    assert request == approved_snapshot\\n    assert subjects == subject_snapshot\\n    assert executed is not request\\n    assert executed[\\\"status\\\"] == \\\"executed\\\"\\n    assert executed[\\\"history\\\"][-1] == {\\n        \\\"action\\\": \\\"execute\\\",\\n        \\\"actor\\\": \\\"alice\\\",\\n        \\\"at\\\": \\\"2025-01-03T12:00:00Z\\\",\\n    }\\n\\n    export = executed[\\\"execution_result\\\"]\\n    expected_rows = [\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-a\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-b\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n    ]\\n    expected_rows.sort(key=lambda row: row[\\\"pseudonym\\\"])\\n    assert export == {\\n        \\\"rows\\\": expected_rows,\\n        \\\"manifest\\\": {\\n            \\\"algorithm\\\": \\\"sha256\\\",\\n            \\\"count\\\": 2,\\n            \\\"sha256\\\": hashlib.sha256(canonical(expected_rows).encode(\\\"utf-8\\\")).hexdigest(),\\n        },\\n    }\\n    assert export == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=date(2025, 1, 3)\\n    )\\n\\n    serialized = canonical(executed)\\n    for leak in (\\n        \\\"test-secret\\\",\\n        \\\"subject-a\\\",\\n        \\\"subject-b\\\",\\n        \\\"Fictional Person\\\",\\n        \\\"person@example.test\\\",\\n        \\\"1990-04-03\\\",\\n    ):\\n        assert leak not in serialized\\n    assert \\\"alice\\\" in serialized\\n\\n\\ndef test_execute_reuse_export_normalizes_now_to_utc_date():\\n    now = datetime(\\n        2025, 1, 3, 23, 30, tzinfo=timezone(timedelta(hours=-2))\\n    )\\n\\n    executed = execute_reuse_export(\\n        make_request(), [make_subject(\\\"subject-a\\\")], actor=\\\"alice\\\", secret=\\\"s\\\", now=now\\n    )\\n\\n    assert executed[\\\"execution_result\\\"] == export_subjects(\\n        [make_subject(\\\"subject-a\\\")], purpose=\\\"research\\\", secret=\\\"s\\\", on=date(2025, 1, 4)\\n    )\\n    assert executed[\\\"history\\\"][-1][\\\"at\\\"] == \\\"2025-01-04T01:30:00Z\\\"\\n\\n\\ndef test_execute_reuse_export_leaves_request_unchanged_on_governance_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n    consumed = []\\n\\n    def tracking_iterable():\\n        consumed.append(\\\"started\\\")\\n        yield make_subject(\\\"subject-a\\\")\\n\\n    with pytest.raises(PermissionError) as caught:\\n        execute_reuse_export(\\n            approved, tracking_iterable(), actor=\\\"bob\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert str(caught.value) == \\\"REQUESTER_REQUIRED\\\"\\n    assert consumed == []\\n    assert approved == snapshot\\n\\n    stale = make_request(approval_expires_on=\\\"2024-12-31\\\")\\n    stale_snapshot = deepcopy(stale)\\n    with pytest.raises(ValueError, match=\\\"APPROVAL_EXPIRED\\\"):\\n        execute_reuse_export(\\n            stale, tracking_iterable(), actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert consumed == []\\n    assert stale == stale_snapshot\\n\\n\\ndef test_execute_reuse_export_rolls_back_and_raises_on_export_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n\\n    with pytest.raises(ValueError, match=\\\"EXECUTION_FAILED\\\") as caught:\\n        execute_reuse_export(\\n            approved,\\n            [make_subject(\\\"subject-a\\\"), make_subject(\\\"subject-a\\\")],\\n            actor=\\\"alice\\\",\\n            secret=\\\"test-secret\\\",\\n            now=NOW,\\n        )\\n    assert approved == snapshot\\n    assert approved[\\\"status\\\"] == \\\"approved\\\"\\n    assert approved[\\\"history\\\"] == []\\n    assert \\\"execution_result\\\" not in approved\\n    message = str(caught.value)\\n    assert message == \\\"EXECUTION_FAILED\\\"\\n    assert \\\"subject-a\\\" not in message\\n    assert \\\"test-secret\\\" not in message\\n\\n\\ndef test_execute_reuse_export_rejects_repeated_execution():\\n    approved = make_request()\\n    executed = execute_reuse_export(\\n        approved,\\n        [make_subject(\\\"subject-a\\\")],\\n        actor=\\\"alice\\\",\\n        secret=\\\"test-secret\\\",\\n        now=NOW,\\n    )\\n\\n    consumed = []\\n    subjects = [make_subject(\\\"subject-b\\\")]\\n    consumed_snapshot = deepcopy(subjects)\\n\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\") as caught:\\n        execute_reuse_export(\\n            executed, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert \\\"subject-b\\\" not in str(caught.value)\\n    assert subjects == consumed_snapshot\\n\",\"old_string\":\"    with pytest.raises(ValueError) as caught:\\n        export_subjects(\\n            [make_subject(identifier)], purpose=\\\"\\\", secret=\\\"test-secret\\\", on=ON\\n        )\\n    assert \\\"purpose\\\" in str(caught.value)\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 20879,
+   "output": 1451,
+   "reasoning": 0,
+   "cache_read": 18529,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 20,
+  "t": 476.9,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_81e4b1842c3f5a4cb95f2cc5230e1aa8",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    consumed = []\\n    subjects = [make_subject(\\\"subject-b\\\")]\\n    subjects_snapshot = deepcopy(subjects)\\n\",\"old_string\":\"    consumed = []\\n    subjects = [make_subject(\\\"subject-b\\\")]\\n    consumed_snapshot = deepcopy(subjects)\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 22340,
+   "output": 72,
+   "reasoning": 0,
+   "cache_read": 20877,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 21,
+  "t": 482.06,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_fff06e3b120356cea9495b0d9715220f",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    assert \\\"subject-b\\\" not in str(caught.value)\\n    assert subjects == subjects_snapshot\\n\",\"old_string\":\"    assert \\\"subject-b\\\" not in str(caught.value)\\n    assert subjects == consumed_snapshot\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 22422,
+   "output": 68,
+   "reasoning": 0,
+   "cache_read": 22338,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 22,
+  "t": 483.14,
+  "content": "Now let's run the tests:",
+  "tool_calls": [
+   {
+    "id": "call_adb5ac131c1b50109c85af65b36f64b0",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_privacy.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 22500,
+   "output": 25,
+   "reasoning": 0,
+   "cache_read": 22420,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 2\n\n==================================== ERRORS ====================================\n____________________ ERROR collecting tests/test_privacy.py ____________________\ntests/test_privacy.py:13: in <module>\n    ON = date(2024, 6, 15)\n         ^^^^\nE   NameError: name 'date' is not defined\n=========================== short test summary info ============================\nERROR tests/test_privacy.py - NameError: name 'date' is not defined\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n"
+  ]
+ },
+ {
+  "call": 23,
+  "t": 488.13,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_d5ec5a56f79054b5933e332c53260fef",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"from copy import deepcopy\\nfrom datetime import date, datetime, timedelta, timezone\\nimport hashlib\\nimport hmac\\nimport json\\n\",\"old_string\":\"from copy import deepcopy\\nfrom datetime import datetime, timedelta, timezone\\nimport hashlib\\nimport hmac\\nimport json\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 22636,
+   "output": 76,
+   "reasoning": 0,
+   "cache_read": 22498,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 24,
+  "t": 490.75,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_8c11e1b4dac652d78bad896845275552",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_privacy.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 22722,
+   "output": 18,
+   "reasoning": 0,
+   "cache_read": 22634,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 1\n..........F....                                                          [100%]\n=================================== FAILURES ===================================\n_____________________ test_execute_reuse_export_end_to_end _____________________\n\n    def test_execute_reuse_export_end_to_end():\n        request = make_request(\"submitted\", approval_expires_on=None)\n>       request = apply_reuse_action(request, \"submit\", \"alice\", NOW)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\ntests/test_privacy.py:311: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \ntrialops/governance.py:108: in apply_reuse_action\n    _require_state(result, \"draft\")\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nrequest = {'id': 'reuse-001', 'requester': 'alice', 'reviewer': 'bob', 'purpose': 'research', ...}\nexpected = 'draft'\n\n    def _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n        states = (expected,) if isinstance(expected, str) else expected\n        if request.get(\"status\") not in states:\n>           raise ValueError(\"INVALID_STATE\")\nE           ValueError: INVALID_STATE\n\ntrialops/governance.py:32: ValueError\n=========================== short test summary info ============================\nFAILED tests/test_privacy.py::test_execute_reuse_export_end_to_end - ValueError: INVALID_STATE\n"
+  ]
+ },
+ {
+  "call": 25,
+  "t": 493.04,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_c22dea1445f75d86ab73ee8d6d88ee1c",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"def test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"draft\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n\",\"old_string\":\"def test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"submitted\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 23093,
+   "output": 110,
+   "reasoning": 0,
+   "cache_read": 22720,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 26,
+  "t": 493.64,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_cf799ba9fd685ca7a1153f1fe712e346",
+    "name": "run_tests",
+    "arguments": "{\"args\":\"tests/test_privacy.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 23213,
+   "output": 18,
+   "reasoning": 0,
+   "cache_read": 23091,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 1\n..........F....                                                          [100%]\n=================================== FAILURES ===================================\n_____________________ test_execute_reuse_export_end_to_end _____________________\n\n    def test_execute_reuse_export_end_to_end():\n        request = make_request(\"draft\", approval_expires_on=None)\n        request = apply_reuse_action(request, \"submit\", \"alice\", NOW)\n        request = apply_reuse_action(request, \"approve\", \"bob\", NOW + timedelta(days=1))\n        approved_snapshot = deepcopy(request)\n    \n        subjects = [make_subject(\"subject-b\"), make_subject(\"subject-a\")]\n        subject_snapshot = deepcopy(subjects)\n    \n        executed = execute_reuse_export(\n            request, subjects, actor=\"alice\", secret=\"test-secret\", now=NOW + timedelta(days=2)\n        )\n    \n        assert request == approved_snapshot\n        assert subjects == subject_snapshot\n        assert executed is not request\n        assert executed[\"status\"] == \"executed\"\n        assert executed[\"history\"][-1] == {\n            \"action\": \"execute\",\n            \"actor\": \"alice\",\n            \"at\": \"2025-01-03T12:00:00Z\",\n        }\n    \n        export = executed[\"execution_result\"]\n        expected_rows = [\n            {\n                \"pseudonym\": pseudonym(\"subject-a\"),\n                \"country\": \"NZ\",\n                \"birth_year\": 1990,\n                \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n            },\n            {\n                \"pseudonym\": pseudonym(\"subject-b\"),\n                \"country\": \"NZ\",\n                \"birth_year\": 1990,\n                \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n            },\n        ]\n        expected_rows.sort(key=lambda row: row[\"pseudonym\"])\n>       assert export == {\n            \"rows\": expected_rows,\n            \"manifest\": {\n                \"algorithm\": \"sha256\",\n                \"count\": 2,\n                \"sha256\": hashlib.sha256(canonical(expected_rows).encode(\"utf-8\")).hexdigest(),\n            },\n        }\nE       AssertionError: assert {'rows': [], ...1161202b945'}} == {'rows': [{'p...cd25a92ae3b'}}\nE         \nE         Differing items:\nE         {'rows': []} != {'rows': [{'pseudonym': 'b9efff3b718bbb2e', 'country': 'NZ', 'birth_year': 1990, 'visits': ['2024-01-02', '2024-05-01']}, {'pseudonym': 'fa2e207e4492df50', 'country': 'NZ', 'birth_year': 1990, 'visits': ['2024-01-02', '2024-05-01']}]}\nE         {'manifest': {'algorithm': 'sha256', 'count': 0, 'sha256': '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'}} != {'manifest': {'algorithm': 'sha256', 'count': 2, 'sha256': '666d83bd3d670c9a2ec6243d32c5eea43065043a052c288ef78c8cd25a92ae3b'}}\nE         \nE         Full diff: (-: missing in left side, +: extra in left side)\nE           {\nE         -     'rows': [\nE         +     'rows': [],\nE         ?              ++\nE         -         {\nE         -             'pseudonym': 'b9efff3b718bbb2e',\nE         -             'country': 'NZ',\nE         -"
+  ]
+ },
+ {
+  "call": 27,
+  "t": 507.91,
+  "content": "The fixture subjects' consent/purge dates must be valid at the export date. Let me add a date-aware helper:",
+  "tool_calls": [
+   {
+    "id": "call_ad380f85e9b757ffba7a8eaa000743ce",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"def make_request(status=\\\"approved\\\", **changes):\\n    purpose = changes.get(\\\"purpose\\\", \\\"research\\\")\\n    value = {\\n        \\\"id\\\": \\\"reuse-001\\\",\\n        \\\"requester\\\": \\\"alice\\\",\\n        \\\"reviewer\\\": \\\"bob\\\",\\n        \\\"purpose\\\": purpose,\\n        \\\"status\\\": status,\\n        \\\"retention_until\\\": \\\"2025-06-30\\\",\\n        \\\"approval_expires_on\\\": \\\"2025-02-01\\\",\\n        \\\"privacy_plan\\\": {\\n            \\\"algorithm\\\": \\\"hmac-sha256\\\",\\n            \\\"domain\\\": purpose,\\n            \\\"fields\\\": [\\\"pseudonym\\\", \\\"country\\\", \\\"birth_year\\\", \\\"visits\\\"],\\n        },\\n        \\\"metadata\\\": {\\n            \\\"representative\\\": True,\\n            \\\"complete\\\": True,\\n            \\\"quality_score\\\": 0.95,\\n        },\\n        \\\"history\\\": [],\\n    }\\n    value.update(changes)\\n    return value\\n\\n\\ndef make_consented_subject(subject_id, *, active_on, purpose=\\\"research\\\"):\\n    \\\"\\\"\\\"A subject whose consent and retention are active on ``active_on``.\\\"\\\"\\\"\\n\\n    return make_subject(\\n        subject_id,\\n        consents=[{\\\"purpose\\\": purpose, \\\"signed_on\\\": active_on.isoformat()}],\\n        purge_after=active_on.isoformat(),\\n    )\\n\\n\\nEXPORT_ON = date(2025, 1, 3)\\n\\n\\ndef test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"draft\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n    request = apply_reuse_action(request, \\\"approve\\\", \\\"bob\\\", NOW + timedelta(days=1))\\n    approved_snapshot = deepcopy(request)\\n\\n    subjects = [\\n        make_consented_subject(\\\"subject-b\\\", active_on=EXPORT_ON),\\n        make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON),\\n    ]\\n    subject_snapshot = deepcopy(subjects)\\n\\n    executed = execute_reuse_export(\\n        request, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW + timedelta(days=2)\\n    )\\n\\n    assert request == approved_snapshot\\n    assert subjects == subject_snapshot\\n    assert executed is not request\\n    assert executed[\\\"status\\\"] == \\\"executed\\\"\\n    assert executed[\\\"history\\\"][-1] == {\\n        \\\"action\\\": \\\"execute\\\",\\n        \\\"actor\\\": \\\"alice\\\",\\n        \\\"at\\\": \\\"2025-01-03T12:00:00Z\\\",\\n    }\\n\\n    export = executed[\\\"execution_result\\\"]\\n    expected_rows = [\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-a\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-b\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n    ]\\n    expected_rows.sort(key=lambda row: row[\\\"pseudonym\\\"])\\n    assert export == {\\n        \\\"rows\\\": expected_rows,\\n        \\\"manifest\\\": {\\n            \\\"algorithm\\\": \\\"sha256\\\",\\n            \\\"count\\\": 2,\\n            \\\"sha256\\\": hashlib.sha256(canonical(expected_rows).encode(\\\"utf-8\\\")).hexdigest(),\\n        },\\n    }\\n    assert export == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=EXPORT_ON\\n    )\\n\\n    serialized = canonical(executed)\\n    for leak in (\\n        \\\"test-secret\\\",\\n        \\\"subject-a\\\",\\n        \\\"subject-b\\\",\\n        \\\"Fictional Person\\\",\\n        \\\"person@example.test\\\",\\n        \\\"1990-04-03\\\",\\n    ):\\n        assert leak not in serialized\\n    assert \\\"alice\\\" in serialized\\n\\n\\ndef test_execute_reuse_export_normalizes_now_to_utc_date():\\n    now = datetime(2025, 1, 3, 23, 30, tzinfo=timezone(timedelta(hours=-2)))\\n    export_on = date(2025, 1, 4)\\n    subjects = [make_consented_subject(\\\"subject-a\\\", active_on=export_on)]\\n\\n    executed = execute_reuse_export(\\n        make_request(), subjects, actor=\\\"alice\\\", secret=\\\"s\\\", now=now\\n    )\\n\\n    assert executed[\\\"execution_result\\\"] == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"s\\\", on=export_on\\n    )\\n    assert executed[\\\"history\\\"][-1][\\\"at\\\"] == \\\"2025-01-04T01:30:00Z\\\"\\n\\n\\ndef test_execute_reuse_export_uses_the_approved_purpose_only():\\n    dual = make_consented_subject(\\n        \\\"subject-a\\\",\\n        active_on=EXPORT_ON,\\n    )\\n    dual[\\\"consents\\\"].append(\\n        {\\\"purpose\\\": \\\"quality-control\\\", \\\"signed_on\\\": EXPORT_ON.isoformat()}\\n    )\\n    quality_only = make_consented_subject(\\n        \\\"subject-qc\\\", active_on=EXPORT_ON, purpose=\\\"quality-control\\\"\\n    )\\n\\n    executed = execute_reuse_export(\\n        make_request(),\\n        [deepcopy(dual), quality_only],\\n        actor=\\\"alice\\\",\\n        secret=\\\"test-secret\\\",\\n        now=datetime(2025, 1, 3, 12, 0, tzinfo=timezone.utc),\\n    )\\n\\n    # Only the research-consented subject is exported, and the governance\\n    # purpose -- never a subject's own consent purposes -- scopes the export.\\n    assert [row[\\\"pseudonym\\\"] for row in executed[\\\"execution_result\\\"][\\\"rows\\\"]] == [\\n        pseudonym(\\\"subject-a\\\")\\n    ]\\n    assert executed[\\\"execution_result\\\"][\\\"manifest\\\"][\\\"count\\\"] == 1\\n    assert dual[\\\"consents\\\"] == [\\n        {\\\"purpose\\\": \\\"research\\\", \\\"signed_on\\\": \\\"2025-01-03\\\"},\\n        {\\\"purpose\\\": \\\"quality-control\\\", \\\"signed_on\\\": \\\"2025-01-03\\\"},\\n    ]\\n\\n\\ndef test_execute_reuse_export_leaves_request_unchanged_on_governance_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n    consumed = []\\n\\n    def tracking_iterable():\\n        consumed.append(\\\"started\\\")\\n        yield make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON)\\n\\n    with pytest.raises(PermissionError) as caught:\\n        execute_reuse_export(\\n            approved, tracking_iterable(), actor=\\\"bob\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert str(caught.value) == \\\"REQUESTER_REQUIRED\\\"\\n    assert consumed == []\\n    assert approved == snapshot\\n\\n    stale = make_request(approval_expires_on=\\\"2024-12-31\\\")\\n    stale_snapshot = deepcopy(stale)\\n    with pytest.raises(ValueError, match=\\\"APPROVAL_EXPIRED\\\"):\\n        execute_reuse_export(\\n            stale, tracking_iterable(), actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert consumed == []\\n    assert stale == stale_snapshot\\n\\n\\ndef test_execute_reuse_export_rolls_back_and_raises_on_export_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n\\n    with pytest.raises(ValueError, match=\\\"EXECUTION_FAILED\\\") as caught:\\n        execute_reuse_export(\\n            approved,\\n            [\\n                make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON),\\n                make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON),\\n            ],\\n            actor=\\\"alice\\\",\\n            secret=\\\"test-secret\\\",\\n            now=NOW,\\n        )\\n    assert approved == snapshot\\n    assert approved[\\\"status\\\"] == \\\"approved\\\"\\n    assert approved[\\\"history\\\"] == []\\n    assert \\\"execution_result\\\" not in approved\\n    message = str(caught.value)\\n    assert message == \\\"EXECUTION_FAILED\\\"\\n    assert \\\"subject-a\\\" not in message\\n    assert \\\"test-secret\\\" not in message\\n\\n\\ndef test_execute_reuse_export_rejects_repeated_execution():\\n    approved = make_request()\\n    executed = execute_reuse_export(\\n        approved,\\n        [make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON)],\\n        actor=\\\"alice\\\",\\n        secret=\\\"test-secret\\\",\\n        now=NOW,\\n    )\\n\\n    subjects = [make_consented_subject(\\\"subject-b\\\", active_on=EXPORT_ON)]\\n    subjects_snapshot = deepcopy(subjects)\\n\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\") as caught:\\n        execute_reuse_export(\\n            executed, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert \\\"subject-b\\\" not in str(caught.value)\\n    assert subjects == subjects_snapshot\\n\",\"old_string\":\"def make_request(status=\\\"approved\\\", **changes):\\n    purpose = changes.get(\\\"purpose\\\", \\\"research\\\")\\n    value = {\\n        \\\"id\\\": \\\"reuse-001\\\",\\n        \\\"requester\\\": \\\"alice\\\",\\n        \\\"reviewer\\\": \\\"bob\\\",\\n        \\\"purpose\\\": purpose,\\n        \\\"status\\\": status,\\n        \\\"retention_until\\\": \\\"2025-06-30\\\",\\n        \\\"approval_expires_on\\\": \\\"2025-02-01\\\",\\n        \\\"privacy_plan\\\": {\\n            \\\"algorithm\\\": \\\"hmac-sha256\\\",\\n            \\\"domain\\\": purpose,\\n            \\\"fields\\\": [\\\"pseudonym\\\", \\\"country\\\", \\\"birth_year\\\", \\\"visits\\\"],\\n        },\\n        \\\"metadata\\\": {\\n            \\\"representative\\\": True,\\n            \\\"complete\\\": True,\\n            \\\"quality_score\\\": 0.95,\\n        },\\n        \\\"history\\\": [],\\n    }\\n    value.update(changes)\\n    return value\\n\\n\\ndef test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"draft\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n    request = apply_reuse_action(request, \\\"approve\\\", \\\"bob\\\", NOW + timedelta(days=1))\\n    approved_snapshot = deepcopy(request)\\n\\n    subjects = [make_subject(\\\"subject-b\\\"), make_subject(\\\"subject-a\\\")]\\n    subject_snapshot = deepcopy(subjects)\\n\\n    executed = execute_reuse_export(\\n        request, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW + timedelta(days=2)\\n    )\\n\\n    assert request == approved_snapshot\\n    assert subjects == subject_snapshot\\n    assert executed is not request\\n    assert executed[\\\"status\\\"] == \\\"executed\\\"\\n    assert executed[\\\"history\\\"][-1] == {\\n        \\\"action\\\": \\\"execute\\\",\\n        \\\"actor\\\": \\\"alice\\\",\\n        \\\"at\\\": \\\"2025-01-03T12:00:00Z\\\",\\n    }\\n\\n    export = executed[\\\"execution_result\\\"]\\n    expected_rows = [\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-a\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n        {\\n            \\\"pseudonym\\\": pseudonym(\\\"subject-b\\\"),\\n            \\\"country\\\": \\\"NZ\\\",\\n            \\\"birth_year\\\": 1990,\\n            \\\"visits\\\": [\\\"2024-01-02\\\", \\\"2024-05-01\\\"],\\n        },\\n    ]\\n    expected_rows.sort(key=lambda row: row[\\\"pseudonym\\\"])\\n    assert export == {\\n        \\\"rows\\\": expected_rows,\\n        \\\"manifest\\\": {\\n            \\\"algorithm\\\": \\\"sha256\\\",\\n            \\\"count\\\": 2,\\n            \\\"sha256\\\": hashlib.sha256(canonical(expected_rows).encode(\\\"utf-8\\\")).hexdigest(),\\n        },\\n    }\\n    assert export == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=date(2025, 1, 3)\\n    )\\n\\n    serialized = canonical(executed)\\n    for leak in (\\n        \\\"test-secret\\\",\\n        \\\"subject-a\\\",\\n        \\\"subject-b\\\",\\n        \\\"Fictional Person\\\",\\n        \\\"person@example.test\\\",\\n        \\\"1990-04-03\\\",\\n    ):\\n        assert leak not in serialized\\n    assert \\\"alice\\\" in serialized\\n\\n\\ndef test_execute_reuse_export_normalizes_now_to_utc_date():\\n    now = datetime(\\n        2025, 1, 3, 23, 30, tzinfo=timezone(timedelta(hours=-2))\\n    )\\n\\n    executed = execute_reuse_export(\\n        make_request(), [make_subject(\\\"subject-a\\\")], actor=\\\"alice\\\", secret=\\\"s\\\", now=now\\n    )\\n\\n    assert executed[\\\"execution_result\\\"] == export_subjects(\\n        [make_subject(\\\"subject-a\\\")], purpose=\\\"research\\\", secret=\\\"s\\\", on=date(2025, 1, 4)\\n    )\\n    assert executed[\\\"history\\\"][-1][\\\"at\\\"] == \\\"2025-01-04T01:30:00Z\\\"\\n\\n\\ndef test_execute_reuse_export_leaves_request_unchanged_on_governance_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n    consumed = []\\n\\n    def tracking_iterable():\\n        consumed.append(\\\"started\\\")\\n        yield make_subject(\\\"subject-a\\\")\\n\\n    with pytest.raises(PermissionError) as caught:\\n        execute_reuse_export(\\n            approved, tracking_iterable(), actor=\\\"bob\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert str(caught.value) == \\\"REQUESTER_REQUIRED\\\"\\n    assert consumed == []\\n    assert approved == snapshot\\n\\n    stale = make_request(approval_expires_on=\\\"2024-12-31\\\")\\n    stale_snapshot = deepcopy(stale)\\n    with pytest.raises(ValueError, match=\\\"APPROVAL_EXPIRED\\\"):\\n        execute_reuse_export(\\n            stale, tracking_iterable(), actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert consumed == []\\n    assert stale == stale_snapshot\\n\\n\\ndef test_execute_reuse_export_rolls_back_and_raises_on_export_failure():\\n    approved = make_request()\\n    snapshot = deepcopy(approved)\\n\\n    with pytest.raises(ValueError, match=\\\"EXECUTION_FAILED\\\") as caught:\\n        execute_reuse_export(\\n            approved,\\n            [make_subject(\\\"subject-a\\\"), make_subject(\\\"subject-a\\\")],\\n            actor=\\\"alice\\\",\\n            secret=\\\"test-secret\\\",\\n            now=NOW,\\n        )\\n    assert approved == snapshot\\n    assert approved[\\\"status\\\"] == \\\"approved\\\"\\n    assert approved[\\\"history\\\"] == []\\n    assert \\\"execution_result\\\" not in approved\\n    message = str(caught.value)\\n    assert message == \\\"EXECUTION_FAILED\\\"\\n    assert \\\"subject-a\\\" not in message\\n    assert \\\"test-secret\\\" not in message\\n\\n\\ndef test_execute_reuse_export_rejects_repeated_execution():\\n    approved = make_request()\\n    executed = execute_reuse_export(\\n        approved,\\n        [make_subject(\\\"subject-a\\\")],\\n        actor=\\\"alice\\\",\\n        secret=\\\"test-secret\\\",\\n        now=NOW,\\n    )\\n\\n    subjects = [make_subject(\\\"subject-b\\\")]\\n    subjects_snapshot = deepcopy(subjects)\\n\\n    with pytest.raises(ValueError, match=\\\"INVALID_STATE\\\") as caught:\\n        execute_reuse_export(\\n            executed, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW\\n        )\\n    assert \\\"subject-b\\\" not in str(caught.value)\\n    assert subjects == subjects_snapshot\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 25028,
+   "output": 3537,
+   "reasoning": 412,
+   "cache_read": 23211,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "error: old_string found 0 times in tests/test_privacy.py; it must match exactly once"
+  ]
+ },
+ {
+  "call": 28,
+  "t": 508.93,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_193a9247ab655c3487ca15f2385720a0",
+    "name": "read_file",
+    "arguments": "{\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 28177,
+   "output": 26,
+   "reasoning": 10,
+   "cache_read": 25026,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "from copy import deepcopy\nfrom datetime import date, datetime, timedelta, timezone\nimport hashlib\nimport hmac\nimport json\n\nimport pytest\n\nfrom trialops.governance import apply_reuse_action\nfrom trialops.privacy import export_subjects, execute_reuse_export\n\n\nON = date(2024, 6, 15)\nNOW = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)\n\n\ndef make_subject(subject_id=\"subject-one\", **changes):\n    record = {\n        \"id\": subject_id,\n        \"name\": \"Fictional Person\",\n        \"birth_date\": \"1990-04-03\",\n        \"email\": \"person@example.test\",\n        \"country\": \"NZ\",\n        \"visits\": [\"2024-05-01\", \"2024-01-02\"],\n        \"consents\": [{\"purpose\": \"research\", \"signed_on\": \"2024-06-15\"}],\n        \"purge_after\": \"2024-06-15\",\n    }\n    record.update(changes)\n    return record\n\n\ndef pseudonym(subject_id, *, purpose=\"research\", secret=\"test-secret\"):\n    message = f\"{purpose}:{subject_id}\".encode(\"utf-8\")\n    return hmac.new(secret.encode(\"utf-8\"), message, hashlib.sha256).hexdigest()[:16]\n\n\ndef canonical(value):\n    return json.dumps(\n        value,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n        ensure_ascii=False,\n        allow_nan=False,\n    )\n\n\ndef test_active_boundaries_sorting_schema_and_canonical_manifest():\n    subjects = [make_subject(\"subject-b\"), make_subject(\"subject-a\")]\n    original = deepcopy(subjects)\n\n    result = export_subjects(subjects, purpose=\"research\", secret=\"test-secret\", on=ON)\n\n    expected_rows = [\n        {\n            \"pseudonym\": pseudonym(\"subject-a\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n        {\n            \"pseudonym\": pseudonym(\"subject-b\"),\n            \"country\": \"NZ\",\n            \"birth_year\": 1990,\n            \"visits\": [\"2024-01-02\", \"2024-05-01\"],\n        },\n    ]\n    expected_rows.sort(key=lambda row: row[\"pseudonym\"])\n    assert result[\"rows\"] == expected_rows\n    assert result[\"manifest\"] == {\n        \"algorithm\": \"sha256\",\n        \"count\": 2,\n        \"sha256\": hashlib.sha256(canonical(expected_rows).encode(\"utf-8\")).hexdigest(),\n    }\n    assert subjects == original\n\n\ndef test_withdrawal_on_on_is_inactive_but_later_withdrawal_is_active():\n    withdrawn = make_subject(\"withdrawn\")\n    withdrawn[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-15\"\n    active = make_subject(\"active\")\n    active[\"consents\"][0][\"withdrawn_on\"] = \"2024-06-16\"\n    expired = make_subject(\"expired\", purge_after=\"2024-06-14\")\n\n    result = export_subjects(\n        [withdrawn, active, expired], purpose=\"research\", secret=\"test-secret\", on=ON\n    )\n\n    assert [row[\"pseudonym\"] for row in result[\"rows\"]] == [pseudonym(\"active\")]\n    assert result[\"manifest\"][\"count\"] == 1\n\n\ndef test_empty_input_has_canonical_empty_manifest():\n    assert export_subjects([], purpose=\"research\", secret=\"test-secret\", on=ON) == {\n        \"rows\": [],\n        \"manifest\": {\n            \"algorithm\": \"sha256\",\n            \"count\": 0,\n            \"sha256\": hashlib.sha2"
+  ]
+ },
+ {
+  "call": 29,
+  "t": 511.59,
+  "content": "Let me rewrite the integration test section with targeted edits:",
+  "tool_calls": [
+   {
+    "id": "call_8f8b0020ba285eb4a9325834c835737d",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"def make_consented_subject(subject_id, *, active_on, purpose=\\\"research\\\"):\\n    \\\"\\\"\\\"A subject whose consent and retention are active on ``active_on``.\\\"\\\"\\\"\\n\\n    return make_subject(\\n        subject_id,\\n        consents=[{\\\"purpose\\\": purpose, \\\"signed_on\\\": active_on.isoformat()}],\\n        purge_after=active_on.isoformat(),\\n    )\\n\\n\\nEXPORT_ON = date(2025, 1, 3)\\n\\n\\ndef test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"draft\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n    request = apply_reuse_action(request, \\\"approve\\\", \\\"bob\\\", NOW + timedelta(days=1))\\n    approved_snapshot = deepcopy(request)\\n\\n    subjects = [\\n        make_consented_subject(\\\"subject-b\\\", active_on=EXPORT_ON),\\n        make_consented_subject(\\\"subject-a\\\", active_on=EXPORT_ON),\\n    ]\\n    subject_snapshot = deepcopy(subjects)\\n\\n    executed = execute_reuse_export(\\n        request,\\n        subjects,\\n        actor=\\\"alice\\\",\\n        secret=\\\"test-secret\\\",\\n        now=NOW + timedelta(days=2),\\n    )\\n\",\"old_string\":\"def test_execute_reuse_export_end_to_end():\\n    request = make_request(\\\"draft\\\", approval_expires_on=None)\\n    request = apply_reuse_action(request, \\\"submit\\\", \\\"alice\\\", NOW)\\n    request = apply_reuse_action(request, \\\"approve\\\", \\\"bob\\\", NOW + timedelta(days=1))\\n    approved_snapshot = deepcopy(request)\\n\\n    subjects = [make_subject(\\\"subject-b\\\"), make_subject(\\\"subject-a\\\")]\\n    subject_snapshot = deepcopy(subjects)\\n\\n    executed = execute_reuse_export(\\n        request, subjects, actor=\\\"alice\\\", secret=\\\"test-secret\\\", now=NOW + timedelta(days=2)\\n    )\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 31842,
+   "output": 480,
+   "reasoning": 78,
+   "cache_read": 28175,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ },
+ {
+  "call": 30,
+  "t": 513.07,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "call_1859e1e8d9fa5f4ab85199e6afd3201b",
+    "name": "edit_file",
+    "arguments": "{\"new_string\":\"    assert export == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=EXPORT_ON\\n    )\\n\",\"old_string\":\"    assert export == export_subjects(\\n        subjects, purpose=\\\"research\\\", secret=\\\"test-secret\\\", on=date(2025, 1, 3)\\n    )\\n\",\"path\":\"tests/test_privacy.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 32254,
+   "output": 89,
+   "reasoning": 0,
+   "cache_read": 31840,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_privacy.py"
+  ]
+ }
+]

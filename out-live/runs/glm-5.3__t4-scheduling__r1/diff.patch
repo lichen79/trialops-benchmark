@@ -1,0 +1,391 @@
+diff -ruN -x __pycache__ -x .pytest_cache a/tests/test_scheduling.py b/tests/test_scheduling.py
+--- a/tests/test_scheduling.py	2026-11-13 14:58:30
++++ b/tests/test_scheduling.py	2026-11-14 11:50:13
+@@ -2,7 +2,7 @@
+ 
+ import pytest
+ 
+-from trialops.scheduling import plan_visits
++from trialops.scheduling import book_subject_visits, plan_visits
+ 
+ 
+ def test_month_end_targets_use_the_original_day_and_leap_year():
+@@ -133,3 +133,298 @@
+             capacity=capacity,
+         )
+     assert capacity == {date(2024, 1, 1): 1}
++
++
++def test_capacity_zero_and_consumed_slots_roll_forward_within_a_plan():
++    capacity = {
++        date(2024, 2, 29): 0,
++        date(2024, 3, 1): 1,
++        date(2024, 3, 31): 0,
++        date(2024, 4, 1): 0,
++        date(2024, 4, 2): 1,
++    }
++    original = dict(capacity)
++
++    visits = plan_visits(
++        first_day=date(2024, 1, 31),
++        offsets_months=[1, 2],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++    )
++
++    assert [visit["local"][:10] for visit in visits] == ["2024-03-01", "2024-04-02"]
++    assert capacity == original
++
++
++def test_rescheduled_visit_preserves_the_original_wall_time():
++    closed = {date(2024, 3, 10)}
++    [visit] = plan_visits(
++        first_day=date(2024, 3, 10),
++        offsets_months=[0],
++        hour=2,
++        minute=30,
++        timezone="America/New_York",
++        closed_days=closed,
++    )
++
++    assert visit["local"] == "2024-03-11T02:30:00-04:00"
++    assert visit["utc"] == "2024-03-11T06:30:00Z"
++
++
++def test_leap_year_month_end_clamping_and_roll_forward():
++    capacity = {date(2024, 2, 29): 0}
++    visits = plan_visits(
++        first_day=date(2024, 1, 31),
++        offsets_months=[1, 2],
++        hour=12,
++        minute=0,
++        timezone="Europe/Paris",
++        capacity=capacity,
++    )
++
++    assert [visit["local"] for visit in visits] == [
++        "2024-03-01T12:00:00+01:00",
++        "2024-03-31T12:00:00+02:00",
++    ]
++    assert [visit["utc"] for visit in visits] == [
++        "2024-03-01T11:00:00Z",
++        "2024-03-31T10:00:00Z",
++    ]
++
++
++def test_non_leap_february_clamps_and_returns_to_the_original_day():
++    visits = plan_visits(
++        first_day=date(2023, 1, 31),
++        offsets_months=[1, 2],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++    )
++
++    assert [visit["local"][:10] for visit in visits] == ["2023-02-28", "2023-03-31"]
++
++
++def test_monthly_candidates_always_derive_from_first_day():
++    capacity = {date(2024, 2, 29): 0}
++    visits = plan_visits(
++        first_day=date(2024, 1, 31),
++        offsets_months=[1, 2, 13],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++    )
++
++    # The Mar 1 move must not shift the later candidates, which still come
++    # from Jan 31 clamped per month.
++    assert [visit["local"][:10] for visit in visits] == [
++        "2024-03-01",
++        "2024-03-31",
++        "2025-02-28",
++    ]
++
++
++def test_paris_booking_keeps_dst_and_month_end_behaviour():
++    subject = make_subject()
++    capacity = {date(2024, 3, 31): 1, date(2024, 4, 30): 1}
++    visits = book_subject_visits(
++        subject,
++        make_protocol(),
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[2, 3],
++        hour=2,
++        minute=30,
++        timezone="Europe/Paris",
++        capacity=capacity,
++    )
++
++    assert [visit["local"] for visit in visits] == [
++        "2024-03-31T03:30:00+02:00",
++        "2024-04-30T03:30:00+02:00",
++    ]
++    assert capacity == {date(2024, 3, 31): 0, date(2024, 4, 30): 0}
++
++
++def test_ineligible_subject_reports_ordered_reasons_and_keeps_capacity():
++    subject = make_subject()
++    subject["consents"] = []
++    subject["flags"] = ["DO_NOT_ENROLL"]
++    capacity = {date(2024, 1, 31): 3}
++    snapshot = dict(capacity)
++
++    with pytest.raises(ValueError) as excinfo:
++        book_subject_visits(
++            subject,
++            make_protocol(),
++            on=date(2024, 6, 15),
++            first_day=date(2024, 1, 31),
++            offsets_months=[0],
++            hour=9,
++            minute=0,
++            timezone="America/New_York",
++            capacity=capacity,
++        )
++
++    assert "INELIGIBLE:CONSENT_MISSING" in str(excinfo.value)
++    assert excinfo.value.args[0].endswith("EXCLUSION_DO_NOT_ENROLL")
++    assert capacity == snapshot
++
++
++def test_booking_decrements_only_listed_dates_and_never_inserts():
++    subject = make_subject()
++    capacity = {date(2024, 2, 29): 1}
++
++    visits = book_subject_visits(
++        subject,
++        make_protocol(),
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[0, 1],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++    )
++
++    assert [visit["local"][:10] for visit in visits] == ["2024-01-31", "2024-02-29"]
++    # Jan 31 was unconstrained and never added; Feb 29 lost its only slot.
++    assert capacity == {date(2024, 2, 29): 0}
++
++
++def test_sequential_bookings_compete_for_the_same_slot():
++    subject = make_subject()
++    protocol = make_protocol()
++    capacity = {date(2024, 1, 31): 1, date(2024, 2, 1): 1}
++    closed = {date(2024, 2, 1)}
++
++    first = book_subject_visits(
++        subject,
++        protocol,
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[0],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++        closed_days=closed,
++    )
++    second = book_subject_visits(
++        subject,
++        protocol,
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[0],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++        closed_days=closed,
++    )
++
++    assert [visit["local"][:10] for visit in first] == ["2024-01-31"]
++    assert [visit["local"][:10] for visit in second] == ["2024-02-02"]
++    assert capacity == {date(2024, 1, 31): 0, date(2024, 2, 1): 1}
++
++
++def test_failed_booking_rolls_back_only_the_current_call():
++    subject = make_subject()
++    protocol = make_protocol()
++    capacity = {date(2024, 1, 31): 1}
++    closed = {date(2024, 2, 1) + timedelta(days=days) for days in range(367)}
++
++    first = book_subject_visits(
++        subject,
++        protocol,
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[0],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity=capacity,
++    )
++    assert capacity == {date(2024, 1, 31): 0}
++
++    with pytest.raises(ValueError, match="UNSCHEDULABLE"):
++        book_subject_visits(
++            subject,
++            protocol,
++            on=date(2024, 6, 15),
++            first_day=date(2024, 1, 31),
++            offsets_months=[0, 1],
++            hour=9,
++            minute=0,
++            timezone="America/New_York",
++            capacity=capacity,
++            closed_days=closed,
++        )
++
++    # The first call stayed committed; nothing about the failed call leaked.
++    assert capacity == {date(2024, 1, 31): 0}
++    assert [visit["local"][:10] for visit in first] == ["2024-01-31"]
++
++
++def test_booking_never_mutates_subject_protocol_or_closed_days():
++    subject = make_subject()
++    protocol = make_protocol()
++    closed = {date(2024, 1, 31)}
++    expected_subject = dict(subject)
++    expected_protocol = dict(protocol)
++
++    visits = book_subject_visits(
++        subject,
++        protocol,
++        on=date(2024, 6, 15),
++        first_day=date(2024, 1, 31),
++        offsets_months=[0, 1],
++        hour=9,
++        minute=0,
++        timezone="America/New_York",
++        capacity={date(2024, 3, 1): 2},
++        closed_days=closed,
++    )
++
++    assert subject == expected_subject
++    assert protocol == expected_protocol
++    assert closed == {date(2024, 1, 31)}
++    assert [visit["local"][:10] for visit in visits] == ["2024-02-01", "2024-03-01"]
++
++
++def test_booking_requires_a_capacity_mapping():
++    with pytest.raises(TypeError):
++        book_subject_visits(
++            make_subject(),
++            make_protocol(),
++            on=date(2024, 6, 15),
++            first_day=date(2024, 1, 31),
++            offsets_months=[0],
++            hour=9,
++            minute=0,
++            timezone="America/New_York",
++            capacity=[(date(2024, 1, 31), 1)],
++        )
++
++
++def make_protocol():
++    return {
++        "min_age": 18,
++        "max_age": 30,
++        "required_consent_version": "v2",
++        "consent_valid_from": "2024-01-01",
++        "labs": {"A": [1, 3], "Z": [10, 20]},
++        "exclusions": ["DO_NOT_ENROLL", "VIP"],
++    }
++
++
++def make_subject():
++    return {
++        "birth_date": "2000-06-15",
++        "consents": [{"version": "v2", "signed_on": "2024-06-15"}],
++        "labs": {"A": 2, "Z": 15},
++        "flags": [],
++    }
++
+diff -ruN -x __pycache__ -x .pytest_cache a/trialops/scheduling.py b/trialops/scheduling.py
+--- a/trialops/scheduling.py	2026-11-13 20:17:29
++++ b/trialops/scheduling.py	2026-11-14 11:49:06
+@@ -5,6 +5,7 @@
+ import calendar
+ from collections.abc import Iterable, Mapping
+ from datetime import date, datetime, timedelta, timezone as datetime_timezone
++from typing import Any, cast
+ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+ 
+ _ONE_DAY = timedelta(days=1)
+@@ -143,6 +144,68 @@
+                 "utc": utc.isoformat(timespec="seconds").replace("+00:00", "Z"),
+             }
+         )
++
++    return visits
++
++
++def _visit_day(local_iso: str) -> date:
++    """Recover the scheduled local calendar day from an ISO local string."""
++    return date.fromisoformat(local_iso[:10])
++
++
++def book_subject_visits(
++    subject: Mapping[str, Any],
++    protocol: Mapping[str, Any],
++    *,
++    on: date,
++    first_day: date,
++    offsets_months: Iterable[int],
++    hour: int,
++    minute: int,
++    timezone: str,
++    capacity: Mapping[date, int],
++    closed_days: Iterable[date] | None = None,
++) -> list[dict[str, object]]:
++    """Evaluate eligibility, then atomically reserve slots for a full plan.
++
++    ``capacity`` stays caller-owned: it is only read while planning and is
++    decremented after ``plan_visits`` returned a complete plan. Any failure
++    therefore leaves it exactly as it was, while slots taken by earlier
++    successful calls remain committed.
++    """
++
++    # Eligibility is decided first, so an ineligible subject never reaches the
++    # planner and never touches the caller's capacity mapping.
++    from trialops.eligibility import evaluate_subject
++
++    evaluation = evaluate_subject(subject, protocol, on)
++
++    if not evaluation.get("eligible"):
++        reasons = evaluation.get("reasons") or []
++        raise ValueError("INELIGIBLE:" + ",".join(str(reason) for reason in reasons))
++
++    if not isinstance(capacity, Mapping):
++        raise TypeError("capacity must be a mapping of dates to slots")
++
++    # Candidate generation, closures, DST handling, argument validation, and
++    # allocation between the visits of this plan all belong to the planner,
++    # which never mutates the capacity mapping it is given.
++    visits = plan_visits(
++        first_day=first_day,
++        offsets_months=offsets_months,
++        hour=hour,
++        minute=minute,
++        timezone=timezone,
++        closed_days=closed_days,
++        capacity=capacity,
++    )
++
++    # Commit only now that the whole plan exists. Dates that the caller did
++    # not list stay unconstrained and are never added to the mapping.
++    for visit in visits:
++        visit_day = _visit_day(cast(str, visit["local"]))
++        if visit_day in capacity:
++            capacity[visit_day] = capacity[visit_day] - 1
+ 
+     return visits
+ 

@@ -1,0 +1,452 @@
+{
+ "generated_at": "2026-11-14T10:14:56Z",
+ "reps": 3,
+ "models": [
+  "kimi-k3.1-pro",
+  "glm-5.3",
+  "claude-opus-5.5",
+  "claude-fable-5-2"
+ ],
+ "tasks": [
+  "t1-eligibility",
+  "t2-privacy",
+  "t3-audit",
+  "t4-scheduling",
+  "t5-safety",
+  "t6-governance"
+ ],
+ "runs": [
+  {
+   "run_id": "kimi-k3.1-pro__t1-eligibility__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t1-eligibility",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t2-privacy__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t2-privacy",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t3-audit__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t3-audit",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t4-scheduling__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t4-scheduling",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t5-safety__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t5-safety",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t6-governance__r1",
+   "model": "kimi-k3.1-pro",
+   "task": "t6-governance",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t1-eligibility__r1",
+   "model": "glm-5.3",
+   "task": "t1-eligibility",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t2-privacy__r1",
+   "model": "glm-5.3",
+   "task": "t2-privacy",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t3-audit__r1",
+   "model": "glm-5.3",
+   "task": "t3-audit",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t4-scheduling__r1",
+   "model": "glm-5.3",
+   "task": "t4-scheduling",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t5-safety__r1",
+   "model": "glm-5.3",
+   "task": "t5-safety",
+   "rep": 1
+  },
+  {
+   "run_id": "glm-5.3__t6-governance__r1",
+   "model": "glm-5.3",
+   "task": "t6-governance",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t1-eligibility__r1",
+   "model": "claude-opus-5.5",
+   "task": "t1-eligibility",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t2-privacy__r1",
+   "model": "claude-opus-5.5",
+   "task": "t2-privacy",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t3-audit__r1",
+   "model": "claude-opus-5.5",
+   "task": "t3-audit",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t4-scheduling__r1",
+   "model": "claude-opus-5.5",
+   "task": "t4-scheduling",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t5-safety__r1",
+   "model": "claude-opus-5.5",
+   "task": "t5-safety",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-opus-5.5__t6-governance__r1",
+   "model": "claude-opus-5.5",
+   "task": "t6-governance",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t1-eligibility__r1",
+   "model": "claude-fable-5-2",
+   "task": "t1-eligibility",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t2-privacy__r1",
+   "model": "claude-fable-5-2",
+   "task": "t2-privacy",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t3-audit__r1",
+   "model": "claude-fable-5-2",
+   "task": "t3-audit",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t4-scheduling__r1",
+   "model": "claude-fable-5-2",
+   "task": "t4-scheduling",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t5-safety__r1",
+   "model": "claude-fable-5-2",
+   "task": "t5-safety",
+   "rep": 1
+  },
+  {
+   "run_id": "claude-fable-5-2__t6-governance__r1",
+   "model": "claude-fable-5-2",
+   "task": "t6-governance",
+   "rep": 1
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t1-eligibility__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t1-eligibility",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t2-privacy__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t2-privacy",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t3-audit__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t3-audit",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t4-scheduling__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t4-scheduling",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t5-safety__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t5-safety",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t6-governance__r2",
+   "model": "kimi-k3.1-pro",
+   "task": "t6-governance",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t1-eligibility__r2",
+   "model": "glm-5.3",
+   "task": "t1-eligibility",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t2-privacy__r2",
+   "model": "glm-5.3",
+   "task": "t2-privacy",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t3-audit__r2",
+   "model": "glm-5.3",
+   "task": "t3-audit",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t4-scheduling__r2",
+   "model": "glm-5.3",
+   "task": "t4-scheduling",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t5-safety__r2",
+   "model": "glm-5.3",
+   "task": "t5-safety",
+   "rep": 2
+  },
+  {
+   "run_id": "glm-5.3__t6-governance__r2",
+   "model": "glm-5.3",
+   "task": "t6-governance",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t1-eligibility__r2",
+   "model": "claude-opus-5.5",
+   "task": "t1-eligibility",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t2-privacy__r2",
+   "model": "claude-opus-5.5",
+   "task": "t2-privacy",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t3-audit__r2",
+   "model": "claude-opus-5.5",
+   "task": "t3-audit",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t4-scheduling__r2",
+   "model": "claude-opus-5.5",
+   "task": "t4-scheduling",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t5-safety__r2",
+   "model": "claude-opus-5.5",
+   "task": "t5-safety",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-opus-5.5__t6-governance__r2",
+   "model": "claude-opus-5.5",
+   "task": "t6-governance",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t1-eligibility__r2",
+   "model": "claude-fable-5-2",
+   "task": "t1-eligibility",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t2-privacy__r2",
+   "model": "claude-fable-5-2",
+   "task": "t2-privacy",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t3-audit__r2",
+   "model": "claude-fable-5-2",
+   "task": "t3-audit",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t4-scheduling__r2",
+   "model": "claude-fable-5-2",
+   "task": "t4-scheduling",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t5-safety__r2",
+   "model": "claude-fable-5-2",
+   "task": "t5-safety",
+   "rep": 2
+  },
+  {
+   "run_id": "claude-fable-5-2__t6-governance__r2",
+   "model": "claude-fable-5-2",
+   "task": "t6-governance",
+   "rep": 2
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t1-eligibility__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t1-eligibility",
+   "rep": 3
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t2-privacy__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t2-privacy",
+   "rep": 3
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t3-audit__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t3-audit",
+   "rep": 3
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t4-scheduling__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t4-scheduling",
+   "rep": 3
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t5-safety__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t5-safety",
+   "rep": 3
+  },
+  {
+   "run_id": "kimi-k3.1-pro__t6-governance__r3",
+   "model": "kimi-k3.1-pro",
+   "task": "t6-governance",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t1-eligibility__r3",
+   "model": "glm-5.3",
+   "task": "t1-eligibility",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t2-privacy__r3",
+   "model": "glm-5.3",
+   "task": "t2-privacy",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t3-audit__r3",
+   "model": "glm-5.3",
+   "task": "t3-audit",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t4-scheduling__r3",
+   "model": "glm-5.3",
+   "task": "t4-scheduling",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t5-safety__r3",
+   "model": "glm-5.3",
+   "task": "t5-safety",
+   "rep": 3
+  },
+  {
+   "run_id": "glm-5.3__t6-governance__r3",
+   "model": "glm-5.3",
+   "task": "t6-governance",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t1-eligibility__r3",
+   "model": "claude-opus-5.5",
+   "task": "t1-eligibility",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t2-privacy__r3",
+   "model": "claude-opus-5.5",
+   "task": "t2-privacy",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t3-audit__r3",
+   "model": "claude-opus-5.5",
+   "task": "t3-audit",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t4-scheduling__r3",
+   "model": "claude-opus-5.5",
+   "task": "t4-scheduling",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t5-safety__r3",
+   "model": "claude-opus-5.5",
+   "task": "t5-safety",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-opus-5.5__t6-governance__r3",
+   "model": "claude-opus-5.5",
+   "task": "t6-governance",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t1-eligibility__r3",
+   "model": "claude-fable-5-2",
+   "task": "t1-eligibility",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t2-privacy__r3",
+   "model": "claude-fable-5-2",
+   "task": "t2-privacy",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t3-audit__r3",
+   "model": "claude-fable-5-2",
+   "task": "t3-audit",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t4-scheduling__r3",
+   "model": "claude-fable-5-2",
+   "task": "t4-scheduling",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t5-safety__r3",
+   "model": "claude-fable-5-2",
+   "task": "t5-safety",
+   "rep": 3
+  },
+  {
+   "run_id": "claude-fable-5-2__t6-governance__r3",
+   "model": "claude-fable-5-2",
+   "task": "t6-governance",
+   "rep": 3
+  }
+ ]
+}

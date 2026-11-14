@@ -1,0 +1,337 @@
+[
+ {
+  "call": 1,
+  "t": 2.4,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "list_files_0",
+    "name": "list_files",
+    "arguments": "{\"path\": \".\"}"
+   }
+  ],
+  "usage": {
+   "input": 905,
+   "output": 78,
+   "reasoning": 27,
+   "cache_read": 898,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "README.md\npyproject.toml\ntests/test_audit.py\ntests/test_eligibility.py\ntests/test_governance.py\ntests/test_privacy.py\ntests/test_safety.py\ntests/test_scheduling.py\ntests/test_smoke.py\ntrialops/__init__.py\ntrialops/audit.py\ntrialops/eligibility.py\ntrialops/governance.py\ntrialops/privacy.py\ntrialops/safety.py\ntrialops/scheduling.py"
+  ]
+ },
+ {
+  "call": 2,
+  "t": 5.13,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "read_file_1",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/safety.py\"}"
+   },
+   {
+    "id": "read_file_2",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\"}"
+   },
+   {
+    "id": "read_file_3",
+    "name": "read_file",
+    "arguments": "{\"path\": \"README.md\"}"
+   },
+   {
+    "id": "read_file_4",
+    "name": "read_file",
+    "arguments": "{\"path\": \"pyproject.toml\"}"
+   }
+  ],
+  "usage": {
+   "input": 1074,
+   "output": 152,
+   "reasoning": 0,
+   "cache_read": 1067,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Deterministic follow-up triage for fictional safety-event records.\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Iterable, Mapping\nfrom dataclasses import dataclass\nfrom datetime import datetime, timedelta, timezone\n\n_SERIOUSNESS_RANK = {\n    \"other\": 0,\n    \"hospitalization\": 1,\n    \"life_threatening\": 2,\n    \"fatal\": 3,\n}\n_REPORTING_DAYS = {\n    \"fatal\": 7,\n    \"life_threatening\": 7,\n    \"hospitalization\": 15,\n    \"other\": 30,\n}\n\n\n@dataclass(frozen=True)\nclass _Event:\n    event_id: str\n    subject_pseudonym: str\n    event_code: str\n    onset: datetime\n    seriousness: str\n    source: str\n    follow_up_of: str | None\n    uncertain: bool\n\n\ndef _required_text(value: object, field: str) -> str:\n    if not isinstance(value, str) or not value.strip():\n        raise ValueError(f\"INVALID_{field.upper()}\")\n    return value\n\n\ndef _aware_utc(value: object, error_code: str) -> datetime:\n    if not isinstance(value, datetime):\n        raise ValueError(error_code)\n    try:\n        if value.tzinfo is None or value.utcoffset() is None:\n            raise ValueError(error_code)\n        return value.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _parse_onset(value: object) -> datetime:\n    if not isinstance(value, str):\n        raise ValueError(\"INVALID_ONSET\")\n    text = value[:-1] + \"+00:00\" if value.endswith(\"Z\") else value\n    try:\n        parsed = datetime.fromisoformat(text)\n    except ValueError as exc:\n        raise ValueError(\"INVALID_ONSET\") from exc\n    return _aware_utc(parsed, \"INVALID_ONSET\")\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.astimezone(timezone.utc).isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef triage_events(events: Iterable[Mapping[str, object]], *, now: datetime) -> list[dict[str, object]]:\n    \"\"\"Merge follow-up chains and derive reporting deadlines, not diagnoses.\"\"\"\n    now_utc = _aware_utc(now, \"INVALID_NOW\")\n    by_id: dict[str, _Event] = {}\n\n    try:\n        iterator = iter(events)\n    except TypeError as exc:\n        raise TypeError(\"events must be iterable\") from exc\n\n    for raw in iterator:\n        if not isinstance(raw, Mapping):\n            raise ValueError(\"INVALID_EVENT\")\n        event_id = _required_text(raw.get(\"event_id\"), \"event_id\")\n        if event_id in by_id:\n            raise ValueError(\"DUPLICATE_EVENT_ID\")\n\n        seriousness = raw.get(\"seriousness\")\n        if not isinstance(seriousness, str) or seriousness not in _SERIOUSNESS_RANK:\n            raise ValueError(\"INVALID_SERIOUSNESS\")\n        uncertain = raw.get(\"uncertain\", False)\n        if not isinstance(uncertain, bool):\n            raise ValueError(\"INVALID_UNCERTAIN\")\n\n        parent = raw.get(\"follow_up_of\")\n        if parent is not None:\n            parent = _required_text(parent, \"follow_up_of\")\n\n        by_id[event_id] = _Event(\n            event_id=event_id,\n            subject_pseudonym=_required_text(\n                raw.get(\"subject_pse",
+   "from copy import deepcopy\nfrom datetime import datetime, timezone\n\nimport pytest\n\nfrom trialops.safety import triage_events\n\n\ndef event(event_id, **changes):\n    value = {\n        \"event_id\": event_id,\n        \"subject_pseudonym\": \"subject-001\",\n        \"event_code\": \"SYNTH-01\",\n        \"onset\": \"2024-01-10T10:00:00+02:00\",\n        \"seriousness\": \"other\",\n        \"source\": \"site-b\",\n    }\n    value.update(changes)\n    return value\n\n\ndef test_chained_followups_merge_offsets_sources_and_seriousness():\n    events = [\n        event(\n            \"E2\",\n            follow_up_of=\"E1\",\n            onset=\"2024-01-09T23:30:00-05:00\",\n            seriousness=\"hospitalization\",\n            source=\"site-a\",\n            uncertain=True,\n        ),\n        event(\"E3\", follow_up_of=\"E2\", onset=\"2024-01-11T00:00:00Z\", seriousness=\"fatal\"),\n        event(\"E1\"),\n    ]\n    original = deepcopy(events)\n    deadline = datetime(2024, 1, 17, 4, 30, tzinfo=timezone.utc)\n\n    assert triage_events(events, now=deadline) == [\n        {\n            \"case_id\": \"E1\",\n            \"subject_pseudonym\": \"subject-001\",\n            \"event_code\": \"SYNTH-01\",\n            \"onset\": \"2024-01-10T04:30:00Z\",\n            \"seriousness\": \"fatal\",\n            \"report_by\": \"2024-01-17T04:30:00Z\",\n            \"sources\": [\"site-a\", \"site-b\"],\n            \"event_ids\": [\"E1\", \"E2\", \"E3\"],\n            \"uncertain\": True,\n            \"overdue\": False,\n        }\n    ]\n    assert events == original\n    assert triage_events(events, now=deadline + deadline.resolution)[0][\"overdue\"]\n\n\ndef test_cases_sort_by_onset_then_case_id():\n    events = [\n        event(\"B\", onset=\"2024-02-01T00:00:00Z\"),\n        event(\"C\", onset=\"2024-01-31T23:00:00Z\"),\n        event(\"A\", onset=\"2024-02-01T00:00:00Z\"),\n    ]\n\n    cases = triage_events(events, now=datetime(2024, 2, 1, tzinfo=timezone.utc))\n    assert [case[\"case_id\"] for case in cases] == [\"C\", \"A\", \"B\"]\n\n\ndef test_duplicate_ids_and_missing_roots_are_rejected():\n    with pytest.raises(ValueError, match=\"DUPLICATE_EVENT_ID\"):\n        triage_events(\n            [event(\"E1\"), event(\"E1\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n    with pytest.raises(ValueError, match=\"MISSING_ROOT\"):\n        triage_events(\n            [event(\"E2\", follow_up_of=\"absent\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n\n\ndef test_cycles_and_mixed_case_fields_are_rejected():\n    with pytest.raises(ValueError, match=\"FOLLOW_UP_CYCLE\"):\n        triage_events(\n            [event(\"A\", follow_up_of=\"B\"), event(\"B\", follow_up_of=\"A\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n    with pytest.raises(ValueError, match=\"MIXED_CASE\"):\n        triage_events(\n            [event(\"A\"), event(\"B\", follow_up_of=\"A\", event_code=\"OTHER\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n\n\ndef test_naive_now_and_onset_are_rejected():\n    with pytest.raises(ValueError, match=\"INVALID_NOW\"):\n        triage_events([",
+   "# trialops\n\nA standard-library Python package for synthetic clinical-trial operations. All subjects, events, and identifiers in tests are fictional. The rules are benchmark fixtures, not medical, legal, or regulatory guidance.\n\nJobs add eligibility evaluation, privacy-preserving export, audit chaining, timezone-safe scheduling, safety follow-up triage, and data-reuse governance. Hidden tests exercise boundary conditions and existing-suite compatibility.\n",
+   "[build-system]\nrequires = [\"setuptools>=61\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"trialops\"\nrequires-python = \">=3.11,<3.12\"\ndependencies = [\"tzdata==2025.2\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"
+  ]
+ },
+ {
+  "call": 3,
+  "t": 7.15,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "run_tests_5",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 3813,
+   "output": 61,
+   "reasoning": 25,
+   "cache_read": 1067,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n...............................................                          [100%]\n47 passed in 0.03s\n"
+  ]
+ },
+ {
+  "call": 4,
+  "t": 10.9,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "read_file_6",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/eligibility.py\"}"
+   },
+   {
+    "id": "read_file_7",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/scheduling.py\"}"
+   },
+   {
+    "id": "read_file_8",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/governance.py\"}"
+   },
+   {
+    "id": "read_file_9",
+    "name": "read_file",
+    "arguments": "{\"path\": \"trialops/__init__.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 3899,
+   "output": 669,
+   "reasoning": 511,
+   "cache_read": 3806,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "\"\"\"Deterministic eligibility checks for synthetic screening data.\"\"\"\n\nfrom datetime import date, datetime\nimport math\nfrom collections.abc import Mapping\nfrom typing import Any\n\n\ndef _value(mapping: Mapping[str, Any], key: str, prefix: str) -> Any:\n    try:\n        return mapping[key]\n    except (KeyError, TypeError):\n        raise ValueError(f\"missing required field {prefix}.{key}\") from None\n\n\ndef _mapping(value: Any, field: str) -> Mapping[str, Any]:\n    if not isinstance(value, Mapping):\n        raise ValueError(f\"{field} must be a mapping\")\n    return value\n\n\ndef _iso_date(value: Any, field: str) -> date:\n    if not isinstance(value, str):\n        raise ValueError(f\"{field} must be an ISO date\")\n    try:\n        return date.fromisoformat(value)\n    except (TypeError, ValueError, OverflowError):\n        raise ValueError(f\"{field} must be an ISO date\") from None\n\n\ndef _string(value: Any, field: str) -> str:\n    if not isinstance(value, str) or not value:\n        raise ValueError(f\"{field} must be a non-empty string\")\n    return value\n\n\ndef _string_list(value: Any, field: str) -> list[str]:\n    if not isinstance(value, list):\n        raise ValueError(f\"{field} must be a list\")\n    for item in value:\n        _string(item, field)\n    return value\n\n\ndef _number(value: Any, field: str) -> int | float:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        raise ValueError(f\"{field} must be a number\")\n    if isinstance(value, float) and not math.isfinite(value):\n        raise ValueError(f\"{field} must be finite\")\n    return value\n\n\ndef _age(birth_date: date, on: date) -> int:\n    return on.year - birth_date.year - (\n        (on.month, on.day) < (birth_date.month, birth_date.day)\n    )\n\n\ndef evaluate_subject(\n    subject: Mapping[str, Any], protocol: Mapping[str, Any], on: date\n) -> dict[str, Any]:\n    \"\"\"Evaluate one fictional subject against a synthetic protocol.\n\n    The most recent consent signed on or before ``on`` is selected, including\n    when that consent is retired or has the wrong version. All returned reason\n    codes follow the protocol-defined ordering.\n    \"\"\"\n\n    subject = _mapping(subject, \"subject\")\n    protocol = _mapping(protocol, \"protocol\")\n    if not isinstance(on, date) or isinstance(on, datetime):\n        raise ValueError(\"on must be a date\")\n\n    birth_date = _iso_date(_value(subject, \"birth_date\", \"subject\"), \"subject.birth_date\")\n    consents = _value(subject, \"consents\", \"subject\")\n    subject_labs = _mapping(_value(subject, \"labs\", \"subject\"), \"subject.labs\")\n    flags = set(\n        _string_list(_value(subject, \"flags\", \"subject\"), \"subject.flags\")\n    )\n\n    min_age = _value(protocol, \"min_age\", \"protocol\")\n    max_age = _value(protocol, \"max_age\", \"protocol\")\n    for value, field in ((min_age, \"protocol.min_age\"), (max_age, \"protocol.max_age\")):\n        if isinstance(value, bool) or not isinstance(value, int) or value < 0:\n            raise ValueError(f\"{field} must be a nonnegative integer\")\n",
+   "\"\"\"Deterministic protocol-visit scheduling for synthetic trial data.\"\"\"\n\nfrom __future__ import annotations\n\nimport calendar\nfrom collections.abc import Iterable, Mapping\nfrom datetime import date, datetime, timedelta, timezone as datetime_timezone\nfrom zoneinfo import ZoneInfo, ZoneInfoNotFoundError\n\n_ONE_DAY = timedelta(days=1)\n_ZERO_DELTA = timedelta(0)\n\n\ndef _plain_integer(value: object) -> bool:\n    return isinstance(value, int) and not isinstance(value, bool)\n\n\ndef _require_day(value: object, field: str) -> date:\n    if isinstance(value, datetime) or not isinstance(value, date):\n        raise TypeError(f\"{field} must contain datetime.date values\")\n    return value\n\n\ndef _add_months(original: date, offset: int) -> date:\n    month_index = original.year * 12 + original.month - 1 + offset\n    year, zero_based_month = divmod(month_index, 12)\n    if not 1 <= year <= 9999:\n        raise ValueError(\"OFFSET_OUT_OF_RANGE\")\n    month = zero_based_month + 1\n    day = min(original.day, calendar.monthrange(year, month)[1])\n    return date(year, month, day)\n\n\ndef _localize(day: date, hour: int, minute: int, zone: ZoneInfo) -> datetime:\n    \"\"\"Attach a zone, shifting gaps by their actual size and preferring fold=0.\"\"\"\n    wall = datetime(\n        day.year,\n        day.month,\n        day.day,\n        hour,\n        minute,\n        tzinfo=zone,\n        fold=0,\n    )\n    offset_at_fold_zero = wall.utcoffset()\n    offset_at_fold_one = wall.replace(fold=1).utcoffset()\n    # ZoneInfo always supplies both offsets. A positive difference identifies a\n    # gap; a negative difference is an ambiguous time, for which fold=0 wins.\n    if offset_at_fold_zero is None or offset_at_fold_one is None:\n        raise ValueError(\"INVALID_LOCAL_TIME\")\n    gap = offset_at_fold_one - offset_at_fold_zero\n    if gap > _ZERO_DELTA:\n        wall = (wall.replace(tzinfo=None) + gap).replace(tzinfo=zone, fold=0)\n    return wall\n\n\ndef plan_visits(\n    *,\n    first_day: date,\n    offsets_months: Iterable[int],\n    hour: int,\n    minute: int,\n    timezone: str,\n    closed_days: Iterable[date] | None = None,\n    capacity: Mapping[date, int] | None = None,\n) -> list[dict[str, object]]:\n    \"\"\"Plan visits in protocol order without modifying caller-owned mappings.\"\"\"\n    _require_day(first_day, \"first_day\")\n\n    try:\n        offsets = tuple(offsets_months)\n    except TypeError as exc:\n        raise TypeError(\"offsets_months must be an iterable of integers\") from exc\n\n    seen_offsets: set[int] = set()\n    for offset in offsets:\n        if not _plain_integer(offset) or offset < 0:\n            raise ValueError(\"INVALID_OFFSET\")\n        if offset in seen_offsets:\n            raise ValueError(\"DUPLICATE_OFFSET\")\n        seen_offsets.add(offset)\n\n    if not _plain_integer(hour) or not 0 <= hour <= 23:\n        raise ValueError(\"INVALID_HOUR\")\n    if not _plain_integer(minute) or not 0 <= minute <= 59:\n        raise ValueError(\"INVALID_MINUTE\")\n    if not isinstance(timezone, str) or not timezone:\n    ",
+   "\"\"\"Synthetic data-reuse workflow with explicit, deterministic guardrails.\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport math\nfrom collections.abc import Mapping\nfrom datetime import date, datetime, timedelta, timezone\n\n_ACTIONS = {\"submit\", \"approve\", \"reject\", \"execute\", \"expire\"}\n_PRIVACY_FIELDS = [\"pseudonym\", \"country\", \"birth_year\", \"visits\"]\n\n\ndef _aware_utc(now: object) -> datetime:\n    if not isinstance(now, datetime):\n        raise ValueError(\"INVALID_NOW\")\n    try:\n        if now.tzinfo is None or now.utcoffset() is None:\n            raise ValueError(\"INVALID_NOW\")\n        return now.astimezone(timezone.utc)\n    except (OverflowError, ValueError) as exc:\n        raise ValueError(\"INVALID_NOW\") from exc\n\n\ndef _format_utc(value: datetime) -> str:\n    return value.isoformat().replace(\"+00:00\", \"Z\")\n\n\ndef _require_state(request: dict[str, object], expected: str | tuple[str, ...]) -> None:\n    states = (expected,) if isinstance(expected, str) else expected\n    if request.get(\"status\") not in states:\n        raise ValueError(\"INVALID_STATE\")\n\n\ndef _require_actor(actor: object, expected: object, code: str) -> None:\n    if actor != expected:\n        raise PermissionError(code)\n\n\ndef _date_field(request: Mapping[str, object], field: str, error_code: str) -> date:\n    value = request.get(field)\n    if not isinstance(value, str):\n        raise ValueError(error_code)\n    try:\n        return date.fromisoformat(value)\n    except ValueError as exc:\n        raise ValueError(error_code) from exc\n\n\ndef _valid_quality_score(value: object) -> bool:\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return False\n    return math.isfinite(value) and value >= 0.95\n\n\ndef _check_policy(request: Mapping[str, object], now_utc: datetime) -> None:\n    purpose = request.get(\"purpose\")\n    expected_privacy_plan = {\n        \"algorithm\": \"hmac-sha256\",\n        \"domain\": purpose,\n        \"fields\": _PRIVACY_FIELDS,\n    }\n    if request.get(\"privacy_plan\") != expected_privacy_plan:\n        raise ValueError(\"PSEUDONYMIZATION_REQUIRED\")\n\n    metadata = request.get(\"metadata\")\n    if (\n        not isinstance(metadata, Mapping)\n        or metadata.get(\"representative\") is not True\n        or metadata.get(\"complete\") is not True\n        or not _valid_quality_score(metadata.get(\"quality_score\"))\n        or not isinstance(purpose, str)\n        or not purpose.strip()\n    ):\n        raise ValueError(\"METADATA_REQUIRED\")\n\n    retention_until = _date_field(request, \"retention_until\", \"RETENTION_EXPIRED\")\n    if now_utc.date() > retention_until:\n        raise ValueError(\"RETENTION_EXPIRED\")\n\n\ndef _check_approval_current(request: Mapping[str, object], now_utc: datetime) -> None:\n    expires_on = _date_field(request, \"approval_expires_on\", \"APPROVAL_EXPIRED\")\n    if now_utc.date() > expires_on:\n        raise ValueError(\"APPROVAL_EXPIRED\")\n\n\ndef apply_reuse_action(\n    request: dict[str, object],\n    action: str,\n    actor: str,\n    now: datetime,",
+   "\"\"\"Synthetic trial-operations helpers used by the Bedrock coding benchmark.\"\"\"\n"
+  ]
+ },
+ {
+  "call": 5,
+  "t": 26.46,
+  "content": "The triage implementation already covers the core merge and validation logic. I’m adding focused coverage for every reporting offset, severity precedence, input-order independence, and strict overdue boundaries, then I’ll run the full suite.",
+  "tool_calls": [
+   {
+    "id": "edit_file_10",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\", \"old_string\": \"from copy import deepcopy\\nfrom datetime import datetime, timezone\\n\\nimport pytest\\n\", \"new_string\": \"from copy import deepcopy\\nfrom datetime import datetime, timezone\\nfrom itertools import permutations\\n\\nimport pytest\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 8220,
+   "output": 3711,
+   "reasoning": 3545,
+   "cache_read": 3892,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_safety.py"
+  ]
+ },
+ {
+  "call": 6,
+  "t": 31.14,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "edit_file_11",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\", \"old_string\": \"def test_naive_now_and_onset_are_rejected():\\n\", \"new_string\": \"def test_all_reporting_offsets_use_the_earliest_onset_and_highest_seriousness():\\n    seriousness = [\\\"fatal\\\", \\\"life_threatening\\\", \\\"hospitalization\\\", \\\"other\\\"]\\n    for rank, level in enumerate(seriousness):\\n        events = [\\n            event(\\\"ROOT\\\", onset=\\\"2024-02-01T00:00:00Z\\\", seriousness=\\\"other\\\"),\\n            event(\\n                \\\"FOLLOWUP\\\",\\n                follow_up_of=\\\"ROOT\\\",\\n                onset=\\\"2024-01-01T02:00:00+02:00\\\",\\n                seriousness=level,\\n            ),\\n        ]\\n        # A more severe record after the earliest onset must not change the\\n        # deadline's clock, while a later, less severe record cannot downgrade it.\\n        if level == \\\"other\\\":\\n            events[0][\\\"seriousness\\\"] = \\\"hospitalization\\\"\\n            events[0][\\\"onset\\\"] = \\\"2024-03-01T00:00:00Z\\\"\\n\\n        case = triage_events(\\n            events, now=datetime(2025, 1, 1, tzinfo=timezone.utc)\\n        )[0]\\n        expected_days = 30 if level == \\\"other\\\" else (15 if level == \\\"hospitalization\\\" else 7)\\n        expected_deadline = datetime(2024, 1, 1, tzinfo=timezone.utc).replace(\\n            day=1 + expected_days\\n        )\\n        assert case[\\\"seriousness\\\"] == (\\n            \\\"hospitalization\\\" if level == \\\"other\\\" else level\\n        )\\n        assert case[\\\"onset\\\"] == \\\"2024-01-01T00:00:00Z\\\"\\n        assert case[\\\"report_by\\\"] == expected_deadline.isoformat().replace(\\n            \\\"+00:00\\\", \\\"Z\\\"\\n        )\\n\\n\\ndef test_followup_order_does_not_affect_case_output():\\n    events = [\\n        event(\\\"ROOT\\\", seriousness=\\\"hospitalization\\\", source=\\\"z-source\\\"),\\n        event(\\n            \\\"CHILD\\\",\\n            follow_up_of=\\\"ROOT\\\",\\n            seriousness=\\\"other\\\",\\n            onset=\\\"2024-01-09T00:00:00Z\\\",\\n            source=\\\"a-source\\\",\\n        ),\\n        event(\\n            \\\"GRANDCHILD\\\",\\n            follow_up_of=\\\"CHILD\\\",\\n            seriousness=\\\"fatal\\\",\\n            onset=\\\"2024-01-12T00:00:00Z\\\",\\n            source=\\\"z-source\\\",\\n            uncertain=True,\\n        ),\\n        event(\\\"OTHER\\\", onset=\\\"2024-01-10T00:00:00Z\\\"),\\n    ]\\n    now = datetime(2024, 2, 1, tzinfo=timezone.utc)\\n    expected = triage_events(events, now=now)\\n    for ordering in permutations(events):\\n        assert triage_events(ordering, now=now) == expected\\n\\n\\ndef test_overdue_is_strict_and_now_is_compared_in_utc():\\n    onset = \\\"2024-01-01T00:00:00Z\\\"\\n    report_by = datetime(2024, 1, 8, tzinfo=timezone.utc)\\n    events = [event(\\\"A\\\", onset=onset, seriousness=\\\"fatal\\\")]\\n\\n    assert not triage_events(events, now=report_by)[0][\\\"overdue\\\"]\\n    assert triage_events(events, now=report_by - report_by.resolution)[0][\\n        \\\"overdue\\\"\\n    ] is False\\n    assert triage_events(events, now=report_by + report_by.resolution)[0][\\\"overdue\\\"]\\n    offset_equal = report_by.astimezone(timezone.utc).replace(tzinfo=timezone.utc)\\n    assert not triage_events(events, now=offset_equal)[0][\\\"overdue\\\"]\\n\\n\\ndef test_naive_now_and_onset_are_rejected():\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 8420,
+   "output": 876,
+   "reasoning": 0,
+   "cache_read": 8213,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_safety.py"
+  ]
+ },
+ {
+  "call": 7,
+  "t": 35.35,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "edit_file_12",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\", \"old_string\": \"from datetime import datetime, timezone\\n\", \"new_string\": \"from datetime import datetime, timedelta, timezone\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 9330,
+   "output": 444,
+   "reasoning": 343,
+   "cache_read": 8413,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_safety.py"
+  ]
+ },
+ {
+  "call": 8,
+  "t": 39.91,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "edit_file_13",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\", \"old_string\": \"def test_all_reporting_offsets_use_the_earliest_onset_and_highest_seriousness():\\n    seriousness = [\\\"fatal\\\", \\\"life_threatening\\\", \\\"hospitalization\\\", \\\"other\\\"]\\n    for rank, level in enumerate(seriousness):\\n        events = [\\n            event(\\\"ROOT\\\", onset=\\\"2024-02-01T00:00:00Z\\\", seriousness=\\\"other\\\"),\\n            event(\\n                \\\"FOLLOWUP\\\",\\n                follow_up_of=\\\"ROOT\\\",\\n                onset=\\\"2024-01-01T02:00:00+02:00\\\",\\n                seriousness=level,\\n            ),\\n        ]\\n        # A more severe record after the earliest onset must not change the\\n        # deadline's clock, while a later, less severe record cannot downgrade it.\\n        if level == \\\"other\\\":\\n            events[0][\\\"seriousness\\\"] = \\\"hospitalization\\\"\\n            events[0][\\\"onset\\\"] = \\\"2024-03-01T00:00:00Z\\\"\\n\\n        case = triage_events(\\n            events, now=datetime(2025, 1, 1, tzinfo=timezone.utc)\\n        )[0]\\n        expected_days = 30 if level == \\\"other\\\" else (15 if level == \\\"hospitalization\\\" else 7)\\n        expected_deadline = datetime(2024, 1, 1, tzinfo=timezone.utc).replace(\\n            day=1 + expected_days\\n        )\\n        assert case[\\\"seriousness\\\"] == (\\n            \\\"hospitalization\\\" if level == \\\"other\\\" else level\\n        )\\n        assert case[\\\"onset\\\"] == \\\"2024-01-01T00:00:00Z\\\"\\n        assert case[\\\"report_by\\\"] == expected_deadline.isoformat().replace(\\n            \\\"+00:00\\\", \\\"Z\\\"\\n        )\\n\", \"new_string\": \"@pytest.mark.parametrize(\\n    (\\\"level\\\", \\\"expected_days\\\"),\\n    [\\n        (\\\"fatal\\\", 7),\\n        (\\\"life_threatening\\\", 7),\\n        (\\\"hospitalization\\\", 15),\\n        (\\\"other\\\", 30),\\n    ],\\n)\\ndef test_reporting_offsets_use_earliest_onset(level, expected_days):\\n    case = triage_events(\\n        [\\n            event(\\\"ROOT\\\", onset=\\\"2024-02-01T00:00:00Z\\\", seriousness=level),\\n            event(\\n                \\\"FOLLOWUP\\\",\\n                follow_up_of=\\\"ROOT\\\",\\n                onset=\\\"2024-01-01T02:00:00+02:00\\\",\\n                seriousness=\\\"other\\\",\\n            ),\\n        ],\\n        now=datetime(2025, 1, 1, tzinfo=timezone.utc),\\n    )[0]\\n    expected_deadline = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(\\n        days=expected_days\\n    )\\n    assert case[\\\"onset\\\"] == \\\"2024-01-01T00:00:00Z\\\"\\n    assert case[\\\"seriousness\\\"] == level\\n    assert case[\\\"report_by\\\"] == expected_deadline.isoformat().replace(\\n        \\\"+00:00\\\", \\\"Z\\\"\\n    )\\n\\n\\ndef test_seriousness_precedence_is_independent_of_arrival_order():\\n    levels = [\\\"other\\\", \\\"hospitalization\\\", \\\"life_threatening\\\", \\\"fatal\\\"]\\n    events = [\\n        event(\\\"ROOT\\\", seriousness=levels[0]),\\n        *[\\n            event(\\n                f\\\"F{index}\\\",\\n                follow_up_of=\\\"ROOT\\\",\\n                seriousness=level,\\n                onset=f\\\"2024-01-{11 + index:02d}T00:00:00Z\\\",\\n            )\\n            for index, level in enumerate(levels[1:], start=1)\\n        ],\\n    ]\\n    case = triage_events(events, now=datetime(2025, 1, 1, tzinfo=timezone.utc))[0]\\n    assert case[\\\"seriousness\\\"] == \\\"fatal\\\"\\n    # The root's earliest onset controls the clock, not the fatal follow-up's.\\n    assert case[\\\"report_by\\\"] == \\\"2024-01-17T08:00:00Z\\\"\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 9465,
+   "output": 930,
+   "reasoning": 0,
+   "cache_read": 9323,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_safety.py"
+  ]
+ },
+ {
+  "call": 9,
+  "t": 42.01,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "edit_file_14",
+    "name": "edit_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\", \"old_string\": \"    offset_equal = report_by.astimezone(timezone.utc).replace(tzinfo=timezone.utc)\\n    assert not triage_events(events, now=offset_equal)[0][\\\"overdue\\\"]\\n\\n\\ndef test_naive_now_and_onset_are_rejected():\\n\", \"new_string\": \"    offset_equal = report_by.astimezone(timezone(timedelta(hours=5, minutes=30)))\\n    assert not triage_events(events, now=offset_equal)[0][\\\"overdue\\\"]\\n\\n\\ndef test_unknown_seriousness_is_rejected():\\n    with pytest.raises(ValueError, match=\\\"^INVALID_SERIOUSNESS$\\\"):\\n        triage_events(\\n            [event(\\\"A\\\", seriousness=\\\"unknown\\\")],\\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\\n        )\\n\\n\\ndef test_naive_now_and_onset_are_rejected():\\n\"}"
+   }
+  ],
+  "usage": {
+   "input": 10429,
+   "output": 395,
+   "reasoning": 139,
+   "cache_read": 9458,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "edited tests/test_safety.py"
+  ]
+ },
+ {
+  "call": 10,
+  "t": 44.22,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "run_tests_15",
+    "name": "run_tests",
+    "arguments": "{\"args\": \"tests/test_safety.py -q\"}"
+   }
+  ],
+  "usage": {
+   "input": 10719,
+   "output": 60,
+   "reasoning": 3,
+   "cache_read": 10422,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.............                                                            [100%]\n"
+  ]
+ },
+ {
+  "call": 11,
+  "t": 51.66,
+  "content": "The new safety tests pass, including all 24 input permutations for a multi-case chain. I’m running the complete repository suite now to check for regressions.",
+  "tool_calls": [
+   {
+    "id": "run_tests_16",
+    "name": "run_tests",
+    "arguments": "{}"
+   }
+  ],
+  "usage": {
+   "input": 10816,
+   "output": 1264,
+   "reasoning": 1195,
+   "cache_read": 10712,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "exit code 0\n.......................................................                  [100%]\n55 passed in 0.04s\n"
+  ]
+ },
+ {
+  "call": 12,
+  "t": 59.54,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "read_file_17",
+    "name": "read_file",
+    "arguments": "{\"path\": \"tests/test_safety.py\"}"
+   }
+  ],
+  "usage": {
+   "input": 10935,
+   "output": 1382,
+   "reasoning": 1327,
+   "cache_read": 10809,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "from copy import deepcopy\nfrom datetime import datetime, timedelta, timezone\nfrom itertools import permutations\n\nimport pytest\n\nfrom trialops.safety import triage_events\n\n\ndef event(event_id, **changes):\n    value = {\n        \"event_id\": event_id,\n        \"subject_pseudonym\": \"subject-001\",\n        \"event_code\": \"SYNTH-01\",\n        \"onset\": \"2024-01-10T10:00:00+02:00\",\n        \"seriousness\": \"other\",\n        \"source\": \"site-b\",\n    }\n    value.update(changes)\n    return value\n\n\ndef test_chained_followups_merge_offsets_sources_and_seriousness():\n    events = [\n        event(\n            \"E2\",\n            follow_up_of=\"E1\",\n            onset=\"2024-01-09T23:30:00-05:00\",\n            seriousness=\"hospitalization\",\n            source=\"site-a\",\n            uncertain=True,\n        ),\n        event(\"E3\", follow_up_of=\"E2\", onset=\"2024-01-11T00:00:00Z\", seriousness=\"fatal\"),\n        event(\"E1\"),\n    ]\n    original = deepcopy(events)\n    deadline = datetime(2024, 1, 17, 4, 30, tzinfo=timezone.utc)\n\n    assert triage_events(events, now=deadline) == [\n        {\n            \"case_id\": \"E1\",\n            \"subject_pseudonym\": \"subject-001\",\n            \"event_code\": \"SYNTH-01\",\n            \"onset\": \"2024-01-10T04:30:00Z\",\n            \"seriousness\": \"fatal\",\n            \"report_by\": \"2024-01-17T04:30:00Z\",\n            \"sources\": [\"site-a\", \"site-b\"],\n            \"event_ids\": [\"E1\", \"E2\", \"E3\"],\n            \"uncertain\": True,\n            \"overdue\": False,\n        }\n    ]\n    assert events == original\n    assert triage_events(events, now=deadline + deadline.resolution)[0][\"overdue\"]\n\n\ndef test_cases_sort_by_onset_then_case_id():\n    events = [\n        event(\"B\", onset=\"2024-02-01T00:00:00Z\"),\n        event(\"C\", onset=\"2024-01-31T23:00:00Z\"),\n        event(\"A\", onset=\"2024-02-01T00:00:00Z\"),\n    ]\n\n    cases = triage_events(events, now=datetime(2024, 2, 1, tzinfo=timezone.utc))\n    assert [case[\"case_id\"] for case in cases] == [\"C\", \"A\", \"B\"]\n\n\ndef test_duplicate_ids_and_missing_roots_are_rejected():\n    with pytest.raises(ValueError, match=\"DUPLICATE_EVENT_ID\"):\n        triage_events(\n            [event(\"E1\"), event(\"E1\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n    with pytest.raises(ValueError, match=\"MISSING_ROOT\"):\n        triage_events(\n            [event(\"E2\", follow_up_of=\"absent\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n\n\ndef test_cycles_and_mixed_case_fields_are_rejected():\n    with pytest.raises(ValueError, match=\"FOLLOW_UP_CYCLE\"):\n        triage_events(\n            [event(\"A\", follow_up_of=\"B\"), event(\"B\", follow_up_of=\"A\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n    with pytest.raises(ValueError, match=\"MIXED_CASE\"):\n        triage_events(\n            [event(\"A\"), event(\"B\", follow_up_of=\"A\", event_code=\"OTHER\")],\n            now=datetime(2024, 1, 1, tzinfo=timezone.utc),\n        )\n\n\n@pytest.mark.parametrize(\n    (\"level\", \"expected_days\"),\n    [\n        (\"fatal"
+  ]
+ },
+ {
+  "call": 13,
+  "t": 64.55,
+  "content": "",
+  "tool_calls": [
+   {
+    "id": "finish_18",
+    "name": "finish",
+    "arguments": "{\"summary\": \"Verified `triage_events` implements deterministic follow-up-chain merging, validation, UTC deadlines, severity precedence, and strict overdue handling. Added tests covering all reporting offsets, severity precedence, input-order independence, invalid seriousness, and overdue boundaries. Full suite: 55 passed.\"}"
+   }
+  ],
+  "usage": {
+   "input": 12886,
+   "output": 744,
+   "reasoning": 641,
+   "cache_read": 10928,
+   "cache_write": 0
+  },
+  "finish_reason": "tool_calls",
+  "results": [
+   "ok"
+  ]
+ }
+]

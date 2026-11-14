@@ -54,6 +54,30 @@ function; GLM repeatedly hits the 30-call ceiling and leaves scratch files that
 the grader auto-rejects. See [`out-live/REPORT.md`](out-live/REPORT.md) for the
 full failure taxonomy with evidence.
 
+## Five-dimension view (144 runs pooled, 36 per model)
+
+| Model | Correctness 代码正确性 | Requirements 需求理解 | Integration 跨模块集成 | Efficiency 工具调用效率 | Discipline 工程交付纪律 |
+|---|---|---|---|---|---|
+| Kimi K3.1 Pro | 1163/1170 (99.4%) | 30/36 | 17/24 | 9.0 calls · 36/36 finish | 36/36 |
+| GLM 5.3 | 796/808 (98.5%) | 31/36 | 16/24 | 30.0 calls · 7/36 finish | 7/36 |
+| Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 calls · 36/36 finish | 35/36 |
+| Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 calls · 36/36 finish | 36/36 |
+
+Correctness = hidden tests passed ÷ executed (suites that never ran are
+excluded); Requirements = every required API implemented with exact error
+contracts; Integration = integrated-API success on t2/t3/t4/t6; Efficiency =
+median calls and natural `finish` rate; Discipline = clean delivery (no ceiling
+stops, no grader rejects, no format/API errors). Full per-job tables:
+[`out-live/REPORT.md`](out-live/REPORT.md).
+
+- GLM is 98.5% correct whenever its code reaches the grader, yet only 19% of
+  runs finish cleanly — four of its six t1 passes arrived *while pinned at the
+  30-call ceiling*. Its failure is convergence and hygiene, not reasoning.
+- Kimi's and Opus's deficits each concentrate in exactly one requirement cell:
+  t4's pinned `INELIGIBLE:` format (Kimi) and t2's missing integration function
+  (Opus) — both deterministic across sessions.
+- Fable maxes all five dimensions, at 5.4× Kimi's spend ($39.96 vs $7.46).
+
 ## Repository layout
 
 ```

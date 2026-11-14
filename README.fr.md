@@ -58,6 +58,33 @@ gouvernance (t2) en n'implémentant jamais la fonction d'intégration ; GLM heur
 noteur rejette automatiquement. Taxonomie complète des échecs avec preuves dans
 [`out-live/REPORT.md`](out-live/REPORT.md).
 
+## Vue en cinq dimensions (144 exécutions groupées, 36 par modèle)
+
+| Modèle | Exactitude du code 代码正确性 | Exigences 需求理解 | Intégration 跨模块集成 | Efficacité d'appels 工具调用效率 | Discipline de livraison 工程交付纪律 |
+|---|---|---|---|---|---|
+| Kimi K3.1 Pro | 1163/1170 (99,4 %) | 30/36 | 17/24 | 9,0 appels · 36/36 finish | 36/36 |
+| GLM 5.3 | 796/808 (98,5 %) | 31/36 | 16/24 | 30,0 appels · 7/36 finish | 7/36 |
+| Claude Opus 5.5 | 946/946 (100 %) | 30/36 | 17/24 | 6,0 appels · 36/36 finish | 35/36 |
+| Claude Fable 5.2 | 1170/1170 (100 %) | 36/36 | 24/24 | 5,0 appels · 36/36 finish | 36/36 |
+
+Exactitude = tests cachés réussis ÷ exécutés (les suites jamais exécutées sont
+exclues) ; Exigences = toutes les API requises implémentées avec contrats
+d'erreur exacts ; Intégration = succès des API intégrées sur t2/t3/t4/t6 ;
+Efficacité = appels médians et taux de `finish` naturels ; Discipline =
+livraison propre (aucun arrêt plafond, aucun rejet du noteur, aucune erreur de
+format/API). Tableaux détaillés par travail :
+[`out-live/REPORT.md`](out-live/REPORT.md).
+
+- GLM est correct à 98,5 % quand son code atteint le noteur, mais seulement 19 %
+  de ses exécutions se terminent proprement — quatre de ses six réussites t1
+  sont arrivées *collées au plafond de 30 appels*. Son échec tient à la
+  convergence et à l'hygiène, pas au raisonnement.
+- Les déficits de Kimi et d'Opus se concentrent chacun dans exactement une
+  cellule d'exigence : le format figé `INELIGIBLE:` de t4 (Kimi) et la fonction
+  d'intégration manquante de t2 (Opus) — déterministes sur les deux sessions.
+- Fable maximise les cinq dimensions, au prix de 5,4× la dépense de Kimi
+  (39,96 $ vs 7,46 $).
+
 ## Structure du dépôt
 
 ```

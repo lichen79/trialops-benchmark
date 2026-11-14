@@ -157,7 +157,108 @@ so Claude token costs are upper bounds; Kimi/GLM benefit from heavy prompt
 caching at $0.20–0.34/1M. Costs are measured tokens × AWS list price
 (`harness/meter.py`), not an AWS bill.
 
-## 6. Comparison with the official 2026-11-13 matrix
+## 6. Five-dimension breakdown (144 runs: official + live pooled)
+
+Both sessions used identical configuration, so they are pooled: **6 runs per
+(model, job) cell, 36 runs per model**. Dimensions:
+
+- **代码正确性 Correctness** — hidden tests passed ÷ hidden tests executed.
+  Runs whose suite never ran (import error at collection, or grader reject) are
+  *not assessable* and excluded, noted as `exec n/6`.
+- **需求理解 Requirements** — share of runs implementing **every** required API
+  and honoring exact error contracts: no missing-function import errors
+  (`execute_reuse_export`, `book_subject_visits`), no pinned-format mismatches
+  (`INELIGIBLE:` / `INVALID_CHAIN:` separators).
+- **跨模块集成 Integration** — for jobs with an integration extension
+  (t2/t3/t4/t6): share of runs whose integrated API exists and works, with
+  failures attributed to the integration part from the grading tails
+  (t2: missing `execute_reuse_export`; t3: `from_records`/`INVALID_CHAIN:`
+  errors; t4: booking/capacity/`INELIGIBLE:` errors; t6: executor seam).
+  t1/t5 have no integration extension (—).
+- **工具调用效率 Tool efficiency** — median model calls per run; the model
+  rollup adds the share of runs ending naturally (`finish`) vs ceilings.
+- **工程交付纪律 Delivery discipline** — share of runs with clean delivery:
+  `finish` stop, no unauthorized-file grader reject, zero format failures,
+  zero API errors.
+
+### 6.1 Model rollup (36 runs each)
+
+| Model | Correctness | Requirements | Integration | Efficiency (med calls · finish) | Discipline |
+|---|---|---|---|---|---|
+| Kimi K3.1 Pro | 1163/1170 (99.4%) | 30/36 | 17/24 | 9.0 · 36/36 | 36/36 |
+| GLM 5.3 | 796/808 (98.5%) | 31/36 | 16/24 | 30.0 · 7/36 | 7/36 |
+| Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 · 36/36 | 35/36 |
+| Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 · 36/36 | 36/36 |
+
+### 6.2 Per-job detail
+
+**Kimi K3.1 Pro**
+
+| Job | Pass | Correctness | Requirements | Integration | Med calls | Discipline |
+|---|---|---|---|---|---|---|
+| t1-eligibility | 6/6 | 114/114 (100%) | 6/6 | — | 5.0 | 6/6 |
+| t2-privacy | 6/6 | 198/198 (100%) | 6/6 | 6/6 | 13.5 | 6/6 |
+| t3-audit | 5/6 | 341/342 (99.7%) | 6/6 | 5/6 | 9.0 | 6/6 |
+| t4-scheduling | 0/6 | 150/156 (96%) | 0/6 | 0/6 | 16.5 | 6/6 |
+| t5-safety | 6/6 | 90/90 (100%) | 6/6 | — | 8.5 | 6/6 |
+| t6-governance | 6/6 | 270/270 (100%) | 6/6 | 6/6 | 6.0 | 6/6 |
+
+**GLM 5.3**
+
+| Job | Pass | Correctness | Requirements | Integration | Med calls | Discipline |
+|---|---|---|---|---|---|---|
+| t1-eligibility | 4/6 | 76/76 (100%, exec 4/6) | 6/6 | — | 30.0 | 0/6 |
+| t2-privacy | 3/6 | 99/99 (100%, exec 3/6) | 4/6 | 4/6 | 30.0 | 0/6 |
+| t3-audit | 4/6 | 277/285 (97%, exec 5/6) | 5/6 | 5/6 | 30.0 | 2/6 |
+| t4-scheduling | 0/6 | 74/78 (95%, exec 3/6) | 4/6 | 1/6 | 30.0 | 0/6 |
+| t5-safety | 3/6 | 45/45 (100%, exec 3/6) | 6/6 | — | 30.0 | 1/6 |
+| t6-governance | 5/6 | 225/225 (100%, exec 5/6) | 6/6 | 6/6 | 26.0 | 4/6 |
+
+**Claude Opus 5.5**
+
+| Job | Pass | Correctness | Requirements | Integration | Med calls | Discipline |
+|---|---|---|---|---|---|---|
+| t1-eligibility | 6/6 | 114/114 (100%) | 6/6 | — | 6.0 | 6/6 |
+| t2-privacy | 0/6 | n/a (exec 0/6) | 0/6 | 0/6 | 7.5 | 6/6 |
+| t3-audit | 6/6 | 342/342 (100%) | 6/6 | 6/6 | 6.0 | 6/6 |
+| t4-scheduling | 5/6 | 130/130 (100%, exec 5/6) | 6/6 | 5/6 | 8.0 | 5/6 |
+| t5-safety | 6/6 | 90/90 (100%) | 6/6 | — | 6.0 | 6/6 |
+| t6-governance | 6/6 | 270/270 (100%) | 6/6 | 6/6 | 5.5 | 6/6 |
+
+**Claude Fable 5.2**
+
+| Job | Pass | Correctness | Requirements | Integration | Med calls | Discipline |
+|---|---|---|---|---|---|---|
+| t1-eligibility | 6/6 | 114/114 (100%) | 6/6 | — | 5.0 | 6/6 |
+| t2-privacy | 6/6 | 198/198 (100%) | 6/6 | 6/6 | 6.0 | 6/6 |
+| t3-audit | 6/6 | 342/342 (100%) | 6/6 | 6/6 | 4.5 | 6/6 |
+| t4-scheduling | 6/6 | 156/156 (100%) | 6/6 | 6/6 | 4.5 | 6/6 |
+| t5-safety | 6/6 | 90/90 (100%) | 6/6 | — | 5.5 | 6/6 |
+| t6-governance | 6/6 | 270/270 (100%) | 6/6 | 6/6 | 5.0 | 6/6 |
+
+### 6.3 What the dimensions reveal
+
+- **Correctness and delivery are independent axes.** GLM is 98.5% correct
+  whenever its code reaches the grader, yet delivers cleanly in only 19% of
+  runs — and **four of its six t1 passes arrived while pinned at the 30-call
+  ceiling** (the grader scores repo state regardless of stop reason). GLM's
+  failure is not reasoning; it is convergence and hygiene.
+- **Kimi's deficit is exactly one requirement cell.** 96% correctness on t4 and
+  flawless discipline elsewhere: the 0/6 on t4 is contract-literalness (the
+  pinned `INELIGIBLE:` format), not logic. Everything else is ≥ 99.7%.
+- **Opus's deficit is exactly one requirements/integration cell.** 100%
+  correctness on every suite it reached — but t2's suite was never reached
+  (0/6 import errors), so its correctness there is *not assessable*. Its 5/6 on
+  t4 discipline is the one-off `.tmp` file.
+- **Fable maxes all five dimensions** — the only model at ceiling on
+  correctness, requirements, integration, efficiency, and discipline alike. The
+  premium is real: $39.96 vs Kimi's $7.46 across 36 runs (5.4×).
+- **Efficiency anti-correlates with stall behavior, not with quality.** Fable
+  5.0 < Opus 6.0 < Kimi 9.0 ≪ GLM 30.0 calls. Kimi's extra calls are productive
+  verify-edit loops (it re-runs tests), GLM's are stalls: the ceiling hit 13
+  times per 18 runs.
+
+## 7. Comparison with the official 2026-11-13 matrix
 
 | Model | Official pass | Live pass | Official $/pass | Live $/pass | Verdict |
 |---|---:|---:|---:|---:|---|
@@ -175,7 +276,7 @@ Kimi's t3 `NoneType` restore bug. Nothing in either session changes the
 ranking: **Fable > Kimi ≈ Opus > GLM**, with Kimi the clear cost/performance
 leader ($0.258 per pass — 2.2× cheaper than Opus, 4.3× cheaper than Fable).
 
-## 7. Methodology and evidence
+## 8. Methodology and evidence
 
 - Harness: `demo/harness/` (`run_matrix.py`, `agent.py`, `meter.py`); 12
   parallel lanes; append-only `results.jsonl` / `spend.jsonl` / `events.jsonl`.

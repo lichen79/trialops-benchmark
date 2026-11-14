@@ -123,17 +123,6 @@ def render(summary: dict[str, dict], language: str, output: Path) -> None:
                 label=summary[key]["label"], zorder=4 if key == "claude-fable-5-2" else 3)
         ax.fill(angles, closed, color=color, alpha=0.055, zorder=2)
 
-    # Label GLM's low/ambiguous vertices directly: bottom-right Integration
-    # (66.7) must not be mistaken for bottom-left Tool efficiency (9.7).
-    for index, offset in [(2, (10, -2)), (3, (0, -16)), (4, (-8, 8))]:
-        ax.annotate(f"{scores['glm-5.3'][index]:.1f}",
-                    (angles[index], scores["glm-5.3"][index]),
-                    textcoords="offset points", xytext=offset,
-                    fontsize=9, fontweight="bold", color=COLORS["glm-5.3"],
-                    bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
-                              edgecolor=COLORS["glm-5.3"], linewidth=0.7, alpha=0.95),
-                    zorder=5)
-
     fig.text(0.055, 0.955, t["title"], fontsize=23, fontweight="bold", color="#172235", ha="left")
     fig.text(0.055, 0.918, t["subtitle"], fontsize=12, color="#526176", ha="left")
 

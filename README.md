@@ -130,6 +130,22 @@ python3 harness/dashboard.py --out out-smoke-v2 --port 8788   # watch it live
 Full prerequisites (AWS profile, Bedrock model access, proxy) and
 troubleshooting: [docs/USERGUIDE.md](docs/USERGUIDE.md).
 
+## Realtime dashboard
+
+![Realtime benchmark dashboard](docs/assets/dashboard.png)
+
+`harness/dashboard.py` provides a read-only live view of run progress, per-model
+pass rates and costs, per-repetition status, in-flight calls, and lifecycle
+events. Start it in a second terminal:
+
+```bash
+python3 harness/dashboard.py --out out-live --port 8788
+# open http://127.0.0.1:8788
+```
+
+Point `--out` at the runner's `P117_OUT` directory. The page refreshes every two
+seconds. Pictured: the completed 2026-11-14 matrix (56/72 passed, $41.33).
+
 ## Security notes
 
 - **No credentials in this repository.** AWS authentication happens at runtime

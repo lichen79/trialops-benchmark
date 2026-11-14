@@ -57,6 +57,14 @@ def _epoch(iso_z: str) -> float:
         return 0.0
 
 
+def _display_out(out: Path) -> str:
+    """Show repository-relative output paths when possible (never leak a home directory)."""
+    try:
+        return out.resolve().relative_to(DEMO.resolve()).as_posix() or "."
+    except ValueError:
+        return str(out)
+
+
 def build_state(out: Path, models: list[str], tasks: list[str], reps: int) -> dict:
     now = time.time()
 
@@ -188,7 +196,7 @@ def build_state(out: Path, models: list[str], tasks: list[str], reps: int) -> di
     total = len(expected)
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "out_dir": str(out),
+        "out_dir": _display_out(out),
         "totals": {"expected": total, "done": done, "passed": passed_n, "failed": done - passed_n,
                    "running": len(running_list), "pending": max(0, total - done - len(running_list)),
                    "progress": round(done / total, 4) if total else 0},

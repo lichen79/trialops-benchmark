@@ -108,6 +108,21 @@ python3 harness/dashboard.py --out out-smoke-v2 --port 8788   # 实时观察
 完整前置条件（AWS 配置、Bedrock 模型访问权限、代理）与故障排查：
 [docs/USERGUIDE.zh-CN.md](docs/USERGUIDE.zh-CN.md)。
 
+## 实时仪表板
+
+![基准测试实时仪表板](docs/assets/dashboard.png)
+
+`harness/dashboard.py` 以只读方式实时展示运行进度、各模型通过率与成本、
+每次重复的状态、在途调用和生命周期事件。在第二个终端中启动：
+
+```bash
+python3 harness/dashboard.py --out out-live --port 8788
+# 打开 http://127.0.0.1:8788
+```
+
+`--out` 必须指向运行器的 `P117_OUT` 目录，页面每两秒刷新一次。图中为已完成的
+2026-11-14 矩阵（56/72 通过，$41.33）。
+
 ## 安全说明
 
 - **本仓库不含任何凭证。** AWS 认证在运行时通过你本地的 AWS CLI 配置与本地

@@ -206,6 +206,13 @@ deterministic failures. Each run preserves its prompt-and-tool transcript,
 final code diff, grading result, token usage, wall time, and cost in
 `transcript.json`, `diff.patch`, `results.jsonl`, and `spend.jsonl`.
 
+The read-only dashboard mirrors the same state while the matrix runs. It shows
+per-repetition status, in-flight calls, costs, and lifecycle events at
+`http://127.0.0.1:8788` (start it with
+`python3 harness/dashboard.py --out out-live --port 8788`).
+
+![Realtime dashboard showing the completed 2026-11-14 matrix](assets/dashboard.png)
+
 ## 7. What the two measured matrices show
 
 | Model | Official (2026-11-13) | Live re-run (2026-11-14) |

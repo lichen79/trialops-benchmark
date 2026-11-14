@@ -189,6 +189,12 @@ T4 Scheduling → T1 Eligibility：预约之前必须先确认受试者符合参
 代码改动）、`results.jsonl`（结果）和 `spend.jsonl`（token 与成本），
 因此测量过程本身也可审计。
 
+只读仪表板在矩阵运行时镜像同一状态，展示每次重复的状态、在途调用、成本
+和生命周期事件。访问 `http://127.0.0.1:8788`（启动命令：
+`python3 harness/dashboard.py --out out-live --port 8788`）。
+
+![显示 2026-11-14 已完成矩阵的实时仪表板](assets/dashboard.png)
+
 ## 7. 两轮实测说明了什么？
 
 | 模型 | 官方（2026-11-13） | 现场复测（2026-11-14） |

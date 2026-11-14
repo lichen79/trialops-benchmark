@@ -137,6 +137,24 @@ python3 harness/dashboard.py --out out-smoke-v2 --port 8788   # suivre en direct
 Prérequis complets (profil AWS, accès aux modèles Bedrock, proxy) et dépannage :
 [docs/USERGUIDE.fr.md](docs/USERGUIDE.fr.md).
 
+## Tableau de bord en temps réel
+
+![Tableau de bord du benchmark en temps réel](docs/assets/dashboard.png)
+
+`harness/dashboard.py` offre une vue en lecture seule de la progression, des
+taux de réussite et des coûts par modèle, du statut de chaque répétition, des
+appels en vol et des événements de cycle de vie. Lancez-le dans un second
+terminal :
+
+```bash
+python3 harness/dashboard.py --out out-live --port 8788
+# ouvrir http://127.0.0.1:8788
+```
+
+`--out` doit pointer sur le répertoire `P117_OUT` du runner. La page se
+rafraîchit toutes les deux secondes. Image : matrice du 2026-11-14 terminée
+(56/72 réussies, 41,33 $).
+
 ## Notes de sécurité
 
 - **Aucun identifiant dans ce dépôt.** L'authentification AWS a lieu à

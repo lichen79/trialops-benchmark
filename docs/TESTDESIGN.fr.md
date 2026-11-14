@@ -224,6 +224,13 @@ exécution conserve `transcript.json` (échanges modèle-outils), `diff.patch`
 (changements réels), `results.jsonl` (résultats) et `spend.jsonl` (jetons et
 coûts), rendant la mesure elle-même auditable.
 
+Le tableau de bord en lecture seule reflète le même état pendant la matrice :
+statut de chaque répétition, appels en vol, coûts et événements de cycle de vie,
+à l'adresse `http://127.0.0.1:8788` (commande :
+`python3 harness/dashboard.py --out out-live --port 8788`).
+
+![Tableau de bord montrant la matrice terminée du 2026-11-14](assets/dashboard.png)
+
 ## 7. Ce que montrent les deux matrices mesurées
 
 | Modèle | Officielle (2026-11-13) | En direct (2026-11-14) |

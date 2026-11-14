@@ -86,7 +86,9 @@ format/API). Tableaux détaillés par travail :
 - GLM est correct à 98,5 % quand son code atteint le noteur, mais seulement 19 %
   de ses exécutions se terminent proprement — quatre de ses six réussites t1
   sont arrivées *collées au plafond de 30 appels*. Son échec tient à la
-  convergence et à l'hygiène, pas au raisonnement.
+  convergence et à l'hygiène, pas au raisonnement. Sur le radar, le point 66,7
+  en bas à droite est l'Intégration ; le point 9,7 en bas à gauche, proche de
+  l'origine, est l'Efficacité d'appels.
 - Les déficits de Kimi et d'Opus se concentrent chacun dans exactement une
   cellule d'exigence : le format figé `INELIGIBLE:` de t4 (Kimi) et la fonction
   d'intégration manquante de t2 (Opus) — déterministes sur les deux sessions.

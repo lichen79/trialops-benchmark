@@ -80,7 +80,9 @@ stops, no grader rejects, no format/API errors). Full per-job tables:
 
 - GLM is 98.5% correct whenever its code reaches the grader, yet only 19% of
   runs finish cleanly — four of its six t1 passes arrived *while pinned at the
-  30-call ceiling*. Its failure is convergence and hygiene, not reasoning.
+  30-call ceiling*. Its failure is convergence and hygiene, not reasoning. On
+  the radar, the 66.7 bottom-right point is Integration; the 9.7 bottom-left
+  point is Tool efficiency, near the origin.
 - Kimi's and Opus's deficits each concentrate in exactly one requirement cell:
   t4's pinned `INELIGIBLE:` format (Kimi) and t2's missing integration function
   (Opus) — both deterministic across sessions.
@@ -124,7 +126,8 @@ P117_OUT=out-smoke-v2 /tmp/p117/venv/bin/python harness/run_matrix.py \
   --models kimi-k3.1-pro --tasks t1 --reps 1     # smoke: one run, ≈ $0.10–0.40
 python3 harness/dashboard.py --out out-smoke-v2 --port 8788   # watch it live
 /tmp/p117/venv/bin/python harness/run_matrix.py --reps 3      # full 72-run matrix
-/tmp/p117/venv/bin/python harness/summarize.py                # aggregate results
+/tmp/p117/venv/bin/python harness/summarize.py                # aggregate official out/
+P117_OUT=out-live /tmp/p117/venv/bin/python harness/summarize.py  # aggregate the repeat matrix
 ```
 
 Full prerequisites (AWS profile, Bedrock model access, proxy) and

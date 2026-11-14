@@ -253,7 +253,9 @@ show their measured percentages. Normalized scores (C/R/I/E/D): Kimi
   whenever its code reaches the grader, yet delivers cleanly in only 19% of
   runs — and **four of its six t1 passes arrived while pinned at the 30-call
   ceiling** (the grader scores repo state regardless of stop reason). GLM's
-  failure is not reasoning; it is convergence and hygiene.
+  failure is not reasoning; it is convergence and hygiene. On the radar, the
+  66.7 bottom-right point is Integration, while 9.7 is the bottom-left Tool
+  efficiency point (0% call-budget economy + 19.4% finish rate, averaged).
 - **Kimi's deficit is exactly one requirement cell.** 96% correctness on t4 and
   flawless discipline elsewhere: the 0/6 on t4 is contract-literalness (the
   pinned `INELIGIBLE:` format), not logic. Everything else is ≥ 99.7%.

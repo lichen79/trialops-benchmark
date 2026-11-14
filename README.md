@@ -63,6 +63,14 @@ full failure taxonomy with evidence.
 | Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 calls · 36/36 finish | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 calls · 36/36 finish | 36/36 |
 
+![Five-dimension radar chart comparing the four models](docs/assets/five-dimensions-radar.svg)
+
+For the radar chart, efficiency is normalized as
+`50 × (1 − median calls / 30) + 50 × (natural finishes / 36)`; all other axes
+show their measured percentages. [SVG](docs/assets/five-dimensions-radar.svg) ·
+[data](docs/assets/five-dimensions-radar.json) ·
+[generator](harness/radar_chart.py).
+
 Correctness = hidden tests passed ÷ executed (suites that never ran are
 excluded); Requirements = every required API implemented with exact error
 contracts; Integration = integrated-API success on t2/t3/t4/t6; Efficiency =
@@ -76,7 +84,7 @@ stops, no grader rejects, no format/API errors). Full per-job tables:
 - Kimi's and Opus's deficits each concentrate in exactly one requirement cell:
   t4's pinned `INELIGIBLE:` format (Kimi) and t2's missing integration function
   (Opus) — both deterministic across sessions.
-- Fable maxes all five dimensions, at 5.4× Kimi's spend ($39.96 vs $7.46).
+- Fable leads all five dimensions (best composite efficiency: 91.7), at 5.4× Kimi's spend ($39.96 vs $7.46).
 
 ## Repository layout
 

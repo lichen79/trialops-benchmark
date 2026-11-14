@@ -1,0 +1,99 @@
+{
+  "sessions": [
+    "out/results.jsonl",
+    "out-live/results.jsonl"
+  ],
+  "runs": 144,
+  "dimensions": [
+    "correctness",
+    "requirements",
+    "integration",
+    "efficiency",
+    "discipline"
+  ],
+  "normalization": {
+    "correctness": "100 * hidden_passed / hidden_executed",
+    "requirements": "100 * requirement_runs / 36",
+    "integration": "100 * integration_runs / 24 (t2/t3/t4/t6 only)",
+    "efficiency": "50 * (1 - median_calls/30) + 50 * natural_finishes/36",
+    "discipline": "100 * clean_runs / 36"
+  },
+  "models": {
+    "kimi-k3.1-pro": {
+      "label": "Kimi K3.1 Pro",
+      "color": "#2ea043",
+      "runs": 36,
+      "median_calls": 9.0,
+      "natural_finishes": 36,
+      "hidden_passed": 1163,
+      "hidden_executed": 1170,
+      "requirement_runs": 30,
+      "integration_runs": 17,
+      "clean_runs": 36,
+      "radar_scores": {
+        "correctness": 99.4,
+        "requirements": 83.3,
+        "integration": 70.8,
+        "efficiency": 85.0,
+        "discipline": 100.0
+      }
+    },
+    "glm-5.3": {
+      "label": "GLM 5.3",
+      "color": "#f85149",
+      "runs": 36,
+      "median_calls": 30.0,
+      "natural_finishes": 7,
+      "hidden_passed": 796,
+      "hidden_executed": 808,
+      "requirement_runs": 31,
+      "integration_runs": 16,
+      "clean_runs": 7,
+      "radar_scores": {
+        "correctness": 98.5,
+        "requirements": 86.1,
+        "integration": 66.7,
+        "efficiency": 9.7,
+        "discipline": 19.4
+      }
+    },
+    "claude-opus-5.5": {
+      "label": "Claude Opus 5.5",
+      "color": "#388bfd",
+      "runs": 36,
+      "median_calls": 6.0,
+      "natural_finishes": 36,
+      "hidden_passed": 946,
+      "hidden_executed": 946,
+      "requirement_runs": 30,
+      "integration_runs": 17,
+      "clean_runs": 35,
+      "radar_scores": {
+        "correctness": 100.0,
+        "requirements": 83.3,
+        "integration": 70.8,
+        "efficiency": 90.0,
+        "discipline": 97.2
+      }
+    },
+    "claude-fable-5-2": {
+      "label": "Claude Fable 5.2",
+      "color": "#d29922",
+      "runs": 36,
+      "median_calls": 5.0,
+      "natural_finishes": 36,
+      "hidden_passed": 1170,
+      "hidden_executed": 1170,
+      "requirement_runs": 36,
+      "integration_runs": 24,
+      "clean_runs": 36,
+      "radar_scores": {
+        "correctness": 100.0,
+        "requirements": 100.0,
+        "integration": 100.0,
+        "efficiency": 91.7,
+        "discipline": 100.0
+      }
+    }
+  }
+}

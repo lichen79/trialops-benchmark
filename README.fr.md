@@ -67,6 +67,14 @@ noteur rejette automatiquement. Taxonomie complète des échecs avec preuves dan
 | Claude Opus 5.5 | 946/946 (100 %) | 30/36 | 17/24 | 6,0 appels · 36/36 finish | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100 %) | 36/36 | 24/24 | 5,0 appels · 36/36 finish | 36/36 |
 
+![Radar en cinq dimensions comparant les quatre modèles](docs/assets/five-dimensions-radar.svg)
+
+Pour le radar, l'efficacité est normalisée par
+`50 × (1 − appels médians / 30) + 50 × (finish naturels / 36)` ; les autres
+axes affichent leurs pourcentages mesurés. [SVG](docs/assets/five-dimensions-radar.svg) ·
+[données](docs/assets/five-dimensions-radar.json) ·
+[générateur](harness/radar_chart.py).
+
 Exactitude = tests cachés réussis ÷ exécutés (les suites jamais exécutées sont
 exclues) ; Exigences = toutes les API requises implémentées avec contrats
 d'erreur exacts ; Intégration = succès des API intégrées sur t2/t3/t4/t6 ;
@@ -82,7 +90,7 @@ format/API). Tableaux détaillés par travail :
 - Les déficits de Kimi et d'Opus se concentrent chacun dans exactement une
   cellule d'exigence : le format figé `INELIGIBLE:` de t4 (Kimi) et la fonction
   d'intégration manquante de t2 (Opus) — déterministes sur les deux sessions.
-- Fable maximise les cinq dimensions, au prix de 5,4× la dépense de Kimi
+- Fable domine les cinq dimensions (meilleure efficacité composite : 91,7), au prix de 5,4× la dépense de Kimi
   (39,96 $ vs 7,46 $).
 
 ## Structure du dépôt

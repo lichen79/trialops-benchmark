@@ -359,7 +359,7 @@ sur son miroir avant toute mesure de modèle (vérifié : 19/33/57/26/15/45 = 19
 cas cachés verts ; les 477 du README comptent aussi les suites visibles des
 miroirs). Note de layout : t1–t4 portent le fichier caché à la racine du miroir,
 t5–t6 exigent une injection dans `tests/` — recettes exactes dans
-`docs/USERGUIDE.md` §3 (ou ses versions 中文/Français).
+`docs/USERGUIDE.md` §3 (ou ses versions anglaise et chinoise).
 
 
 ## 5. La boucle d'agent (`harness/agent.py`)

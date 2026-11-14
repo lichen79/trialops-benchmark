@@ -60,18 +60,18 @@ noteur rejette automatiquement. Taxonomie complète des échecs avec preuves dan
 
 ## Vue en cinq dimensions (144 exécutions groupées, 36 par modèle)
 
-| Modèle | Exactitude du code 代码正确性 | Exigences 需求理解 | Intégration 跨模块集成 | Efficacité d'appels 工具调用效率 | Discipline de livraison 工程交付纪律 |
+| Modèle | Exactitude du code | Exigences | Intégration | Efficacité d'appels | Discipline de livraison |
 |---|---|---|---|---|---|
 | Kimi K3.1 Pro | 1163/1170 (99,4 %) | 30/36 | 17/24 | 9,0 appels · 36/36 finish | 36/36 |
 | GLM 5.3 | 796/808 (98,5 %) | 31/36 | 16/24 | 30,0 appels · 7/36 finish | 7/36 |
 | Claude Opus 5.5 | 946/946 (100 %) | 30/36 | 17/24 | 6,0 appels · 36/36 finish | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100 %) | 36/36 | 24/24 | 5,0 appels · 36/36 finish | 36/36 |
 
-![Radar en cinq dimensions comparant les quatre modèles](docs/assets/five-dimensions-radar.svg)
+![Radar en cinq dimensions comparant les quatre modèles](docs/assets/five-dimensions-radar.fr.svg)
 
 Pour le radar, l'efficacité est normalisée par
 `50 × (1 − appels médians / 30) + 50 × (finish naturels / 36)` ; les autres
-axes affichent leurs pourcentages mesurés. [SVG](docs/assets/five-dimensions-radar.svg) ·
+axes affichent leurs pourcentages mesurés. [SVG](docs/assets/five-dimensions-radar.fr.svg) ·
 [données](docs/assets/five-dimensions-radar.json) ·
 [générateur](harness/radar_chart.py).
 
@@ -106,12 +106,12 @@ out/            résultats de la matrice officielle (2026-11-13, 72 exécutions)
 out-live/       résultats de la ré-exécution (2026-11-14, 72 exécutions) + REPORT.md
 out-opus-us/    ensemble de remplacement Opus US-CRIS cité par la matrice officielle
 out-smoke/      session de fumée d'origine ; out-smoke-v2/ exécution de validation
-docs/           USERGUIDE et TESTDESIGN en English, 中文 et Français
+docs/           USERGUIDE et TESTDESIGN en anglais, chinois et français
 ```
 
 ## Documentation
 
-| Document | English | 中文 | Français |
+| Document | Anglais | Chinois | Français |
 |---|---|---|---|
 | Guide utilisateur (reproduction pas à pas) | [docs/USERGUIDE.md](docs/USERGUIDE.md) | [docs/USERGUIDE.zh-CN.md](docs/USERGUIDE.zh-CN.md) | [docs/USERGUIDE.fr.md](docs/USERGUIDE.fr.md) |
 | Document de conception des tests | [docs/TESTDESIGN.md](docs/TESTDESIGN.md) | [docs/TESTDESIGN.zh-CN.md](docs/TESTDESIGN.zh-CN.md) | [docs/TESTDESIGN.fr.md](docs/TESTDESIGN.fr.md) |

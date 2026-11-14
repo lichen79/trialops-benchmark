@@ -162,22 +162,22 @@ caching at $0.20–0.34/1M. Costs are measured tokens × AWS list price
 Both sessions used identical configuration, so they are pooled: **6 runs per
 (model, job) cell, 36 runs per model**. Dimensions:
 
-- **代码正确性 Correctness** — hidden tests passed ÷ hidden tests executed.
+- **Correctness** — hidden tests passed ÷ hidden tests executed.
   Runs whose suite never ran (import error at collection, or grader reject) are
   *not assessable* and excluded, noted as `exec n/6`.
-- **需求理解 Requirements** — share of runs implementing **every** required API
+- **Requirements** — share of runs implementing **every** required API
   and honoring exact error contracts: no missing-function import errors
   (`execute_reuse_export`, `book_subject_visits`), no pinned-format mismatches
   (`INELIGIBLE:` / `INVALID_CHAIN:` separators).
-- **跨模块集成 Integration** — for jobs with an integration extension
+- **Integration** — for jobs with an integration extension
   (t2/t3/t4/t6): share of runs whose integrated API exists and works, with
   failures attributed to the integration part from the grading tails
   (t2: missing `execute_reuse_export`; t3: `from_records`/`INVALID_CHAIN:`
   errors; t4: booking/capacity/`INELIGIBLE:` errors; t6: executor seam).
   t1/t5 have no integration extension (—).
-- **工具调用效率 Tool efficiency** — median model calls per run; the model
+- **Tool efficiency** — median model calls per run; the model
   rollup adds the share of runs ending naturally (`finish`) vs ceilings.
-- **工程交付纪律 Delivery discipline** — share of runs with clean delivery:
+- **Delivery discipline** — share of runs with clean delivery:
   `finish` stop, no unauthorized-file grader reject, zero format failures,
   zero API errors.
 

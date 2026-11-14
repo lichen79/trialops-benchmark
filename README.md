@@ -1,6 +1,6 @@
 # trialops-benchmark
 
-**README: English · [中文](README.zh-CN.md) · [Français](README.fr.md)**
+**README: English · [Chinese](README.zh-CN.md) · [French](README.fr.md)**
 
 A controlled coding-agent benchmark: Kimi K3.1 and GLM 5.3 vs Claude Opus 5.5
 and Claude Fable 5.2 on Amazon Bedrock, measured on six synthetic
@@ -56,7 +56,7 @@ full failure taxonomy with evidence.
 
 ## Five-dimension view (144 runs pooled, 36 per model)
 
-| Model | Correctness 代码正确性 | Requirements 需求理解 | Integration 跨模块集成 | Efficiency 工具调用效率 | Discipline 工程交付纪律 |
+| Model | Correctness | Requirements | Integration | Efficiency | Discipline |
 |---|---|---|---|---|---|
 | Kimi K3.1 Pro | 1163/1170 (99.4%) | 30/36 | 17/24 | 9.0 calls · 36/36 finish | 36/36 |
 | GLM 5.3 | 796/808 (98.5%) | 31/36 | 16/24 | 30.0 calls · 7/36 finish | 7/36 |
@@ -99,12 +99,12 @@ out/            official matrix results (2026-11-13, 72 runs)
 out-live/       live re-run results (2026-11-14, 72 runs) + REPORT.md
 out-opus-us/    Opus US-CRIS replacement set referenced by the official matrix
 out-smoke/      original smoke session; out-smoke-v2/ validation smoke run
-docs/           USERGUIDE + TESTDESIGN in English, 中文 and Français
+docs/           USERGUIDE + TESTDESIGN in English, Chinese and French
 ```
 
 ## Documentation
 
-| Document | English | 中文 | Français |
+| Document | English | Chinese | French |
 |---|---|---|---|
 | User guide (reproduce step by step) | [docs/USERGUIDE.md](docs/USERGUIDE.md) | [docs/USERGUIDE.zh-CN.md](docs/USERGUIDE.zh-CN.md) | [docs/USERGUIDE.fr.md](docs/USERGUIDE.fr.md) |
 | Test design document | [docs/TESTDESIGN.md](docs/TESTDESIGN.md) | [docs/TESTDESIGN.zh-CN.md](docs/TESTDESIGN.zh-CN.md) | [docs/TESTDESIGN.fr.md](docs/TESTDESIGN.fr.md) |

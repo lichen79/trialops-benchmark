@@ -43,11 +43,11 @@ Fable 是唯一全胜的模型——两次测量皆然。Kimi 在一个固定错
 | Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 次调用 · 36/36 自然结束 | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 次调用 · 36/36 自然结束 | 36/36 |
 
-![四个模型的五维雷达图](docs/assets/five-dimensions-radar.svg)
+![四个模型的五维雷达图](docs/assets/five-dimensions-radar.zh-CN.svg)
 
 雷达图中，工具调用效率归一化为
 `50 × (1 − 调用中位数 / 30) + 50 × (自然 finish 次数 / 36)`；其余各轴均为
-实测百分比。[SVG 图](docs/assets/five-dimensions-radar.svg) ·
+实测百分比。[SVG 图](docs/assets/five-dimensions-radar.zh-CN.svg) ·
 [数据](docs/assets/five-dimensions-radar.json) ·
 [生成脚本](harness/radar_chart.py)。
 

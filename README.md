@@ -1,6 +1,6 @@
 # trialops-benchmark
 
-**README: English · [Chinese](README.zh-CN.md) · [French](README.fr.md)**
+**README: English · [中文](README.zh-CN.md) · [Français](README.fr.md)**
 
 A controlled coding-agent benchmark: Kimi K3.1 and GLM 5.3 vs Claude Opus 5.5
 and Claude Fable 5.2 on Amazon Bedrock, measured on six synthetic

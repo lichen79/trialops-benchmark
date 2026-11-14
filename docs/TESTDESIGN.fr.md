@@ -7,7 +7,277 @@ décision a été prise, et comment continuer : valider, exécuter, étendre,
 interpréter. Il complète `README.md` (résultats), `docs/USERGUIDE.md`
 (opérations) et `out-live/REPORT.md` (analyse de la dernière mesure).
 
+## Comment lire ce document
+
+**Commencez par la partie introductive.** Elle explique l'objectif, le déroulé
+d'une exécution et les six scénarios métier en langage accessible. **L'annexe**
+conserve les contrats précis, les points de pression des tests, les détails du
+harnais, le guide d'extension et les schémas de données.
+
+## 1. Objectif de conception
+
+Sur Amazon Bedrock, comparer équitablement quatre modèles sur leur capacité à
+réaliser un travail d'ingénierie Python dans **le même environnement de codage
+réel, avec la même invite, les mêmes outils et les mêmes limites d'exécution**.
+
+Il ne s'agit pas simplement de répondre à des questions de programmation. Chaque
+modèle agit comme un ingénieur informatique : il inspecte le dépôt, comprend la
+structure et les exigences, conçoit une solution, crée ou modifie le code,
+exécute les tests, analyse les erreurs et itère. Une suite pytest cachée,
+indépendante et faisant autorité, décide ensuite si le travail est réellement
+terminé.
+
+> **Principe central : ne pas évaluer la qualité du discours du modèle, mais
+> vérifier si le code livré passe les tests.**
+
+Chaque exécution autorise au maximum **30 appels au modèle**, **20 minutes** et
+**16 384 jetons de complétion**. Tous les modèles partagent la même invite
+système, la même boucle d'agent et six outils : `list_files`, `read_file`,
+`write_file`, `edit_file`, `run_tests` et `finish`.
+
+Une mesure comprend :
+
+```text
+6 travaux × 4 modèles × 3 répétitions = 72 exécutions
+```
+
+Le dépôt contient deux mesures indépendantes : la matrice officielle
+(2026-11-13) et la ré-exécution en direct (2026-11-14), soit 144 exécutions.
+
+## 2. Que teste une exécution ?
+
+1. **Lire** le code existant et la structure du projet.
+2. **Analyser** les exigences et choisir une approche d'implémentation.
+3. **Créer ou modifier** du code Python.
+4. **Exécuter les tests** et inspecter les erreurs.
+5. **Corriger et itérer** dans les limites fixées.
+6. **Noter indépendamment** : les changements de production sont appliqués à un
+   checkout vierge et évalués par les suites visible et cachée faisant autorité.
+
+Les tests visibles aident l'agent à comprendre le comportement de base. Les
+tests cachés l'empêchent de réussir avec une implémentation seulement plausible
+ou optimisée pour ses propres tests. Les tests et la configuration pytest écrits
+par l'agent n'entrent jamais dans le checkout de notation.
+
+## 3. Un système, six travaux, deux liaisons d'intégration
+
+Les six travaux sont les modules d'un même backend fictif d'**opérations
+d'essais cliniques**, et non six exercices indépendants :
+
+```text
+Trial Operations Platform
+├── T1 · Eligibility   — sélection des sujets et règles de consentement
+├── T2 · Privacy       — export de recherche respectueux de la vie privée
+├── T3 · Audit         — journal inviolable et restauration
+├── T4 · Scheduling    — visites, fuseaux horaires et capacité
+├── T5 · Safety        — triage des suivis d'événements de sécurité
+└── T6 · Governance    — flux d'approbation de réutilisation des données
+
+T2 Privacy → T6 Governance : l'export doit passer par le flux d'approbation.
+T4 Scheduling → T1 Eligibility : toute réservation exige d'abord l'éligibilité.
+```
+
+Chaque travail commence par une fonctionnalité autonome. Les plus difficiles
+ajoutent ensuite une extension d'intégration. On distingue ainsi le modèle qui
+sait écrire une fonction Python de celui qui sait lire plusieurs modules,
+respecter les contrats d'API et terminer un flux métier. T2 et T4 sont les cas
+intermodules les plus nets ; T3 ajoute la restauration de la chaîne d'audit et
+T6 fournit le point d'extension `executor` utilisé par T2.
+
+## 4. Les six travaux en langage métier
+
+### T1 — Eligibility : sélection des sujets
+
+- **Scénario.** Déterminer si un sujet peut participer à un protocole à une date
+  donnée, selon son consentement éclairé, son âge, ses résultats de
+  laboratoire et ses critères d'exclusion.
+- **Implémentation.** `evaluate_subject(subject, protocol, on)` retourne
+  l'éligibilité, les raisons d'échec ordonnées et la version de consentement
+  sélectionnée.
+- **Difficultés.** Choisir le consentement le plus récent sans repli sur une
+  version antérieure ; calculer l'âge exact au lieu de soustraire les années ;
+  gérer les anniversaires bissextiles et le consentement du jour même ; inclure
+  les bornes d'âge et de laboratoire ; produire les raisons dans l'ordre exigé ;
+  retourner la version sélectionnée même si elle est incorrecte.
+- **Capacité évaluée.** Un petit moteur de règles métier : logique de dates,
+  validation des entrées et sortie déterministe.
+
+### T2 — Privacy : export de recherche avec gouvernance
+
+- **Scénario.** Exporter des données d'essai pour une autre étude sans divulguer
+  noms, adresses e-mail, dates de naissance complètes, identifiants de sujets,
+  consentements ou secrets.
+- **Implémentation.** `export_subjects` filtre selon la finalité du
+  consentement, le retrait et la rétention ; produit un pseudonyme de 16
+  caractères hexadécimaux avec HMAC-SHA256 sur `purpose:id` ; n'exporte que les
+  champs autorisés et hache un manifeste JSON canonique.
+  `execute_reuse_export` doit passer exactement une fois par T6 et appeler
+  l'export exactement une fois via son executor.
+- **Difficultés.** Séparation de domaine par finalité, sérialisation canonique,
+  IDs dupliqués ou invalides, non-mutation, et messages d'erreur ne révélant
+  aucune donnée sensible. Un échec d'export ne doit pas laisser un faux état
+  « exécuté ».
+- **Capacité évaluée.** Minimisation des données, pseudonymisation, hygiène
+  cryptographique, contrats d'API et exécution intermodules exactement une fois.
+
+### T3 — Audit : intégrité et restauration de confiance
+
+- **Scénario.** Enregistrer qui a fait quoi et quand, de manière à détecter
+  toute falsification ultérieure.
+- **Implémentation.** `AuditChain` relie les enregistrements avec
+  `previous_hash` et un hachage SHA256 canonique. `verify` retourne des codes
+  d'erreur déterministes ; `from_records` restaure un snapshot et poursuit les
+  ajouts.
+- **Difficultés.** JSON canonique, normalisation UTC sans microsecondes,
+  contrôles de séquence et de liaison, détection des doublons, et indépendance
+  de la restauration par copie profonde. Les ancres de confiance
+  `expected_head` et `expected_length` détectent aussi les éditions re-hachées
+  et les troncatures de suffixe. Les erreurs de restauration respectent le
+  format exact `INVALID_CHAIN:`.
+- **Capacité évaluée.** Structures append-only, intégrité cryptographique,
+  discipline de sérialisation et conception de la reprise.
+
+### T4 — Scheduling : visites et réservations atomiques
+
+- **Scénario.** Planifier une série de visites pour un sujet éligible en tenant
+  compte des fins de mois, des fermetures, des transitions horaires et d'une
+  capacité quotidienne limitée.
+- **Implémentation.** `plan_visits` calcule les candidats et alloue les jours ;
+  `book_subject_visits` vérifie d'abord l'éligibilité T1 puis engage la
+  capacité.
+- **Difficultés.** Chaque candidat mensuel dérive du jour d'origine
+  (31 janv. → 28 févr. → 31 mars, jamais 28 mars). Les heures inexistantes au
+  changement DST avancent de la durée du trou ; les heures ambiguës utilisent
+  `fold=0`. La capacité n'est engagée qu'après le succès complet, décrémentée
+  seulement pour les dates déjà listées et reste inchangée en cas d'échec. Le
+  message d'inéligibilité a un format exact.
+- **Capacité évaluée.** Arithmétique calendaire, zoneinfo/DST, allocation de
+  ressources, atomicité de type transaction et rollback.
+
+### T5 — Safety : triage des événements de suivi
+
+- **Scénario.** Fusionner un rapport de sécurité initial et ses suivis en un
+  seul cas, plutôt que de les traiter comme des événements indépendants.
+- **Implémentation.** `triage_events(events, now)` suit les liens
+  `follow_up_of`, valide chaque chaîne et produit un cas consolidé.
+- **Difficultés.** Rejeter cycles, racines manquantes, IDs dupliqués et chaînes
+  mélangeant sujets ou codes d'événement. Utiliser l'onset le plus tôt et la
+  gravité la plus élevée ; calculer les délais de 7/15/30 jours depuis cet
+  onset, jamais depuis l'arrivée d'un suivi ; conserver sources et incertitude ;
+  calculer le retard strictement par `report_by < now` ; produire une sortie
+  indépendante de l'ordre d'entrée.
+- **Capacité évaluée.** Traversal de graphes, détection de cycles, corrélation
+  d'événements, agrégation déterministe et logique de SLA temporel.
+
+### T6 — Governance : flux d'approbation de réutilisation
+
+- **Scénario.** Un demandeur soumet une demande de réutilisation, un autre
+  réviseur l'approuve ou la rejette, et seule une approbation autorisée et non
+  expirée permet l'export.
+- **Implémentation.** `apply_reuse_action` implémente
+  `draft → submitted → approved → executed`, avec les états rejeté et expiré,
+  ainsi qu'un crochet `executor` optionnel utilisé par T2.
+- **Difficultés.** Séparation des tâches, contrôles de rôle, `privacy_plan`
+  exact, métadonnées représentatives et complètes, `quality_score >= 0.95`, et
+  deux horloges distinctes : expiration de l'approbation à 30 jours et
+  expiration de la rétention. Retourner une copie profonde, ajouter
+  l'historique UTC et gérer l'échec de l'executor sans enregistrer un faux
+  succès.
+- **Capacité évaluée.** Machines à états finis, contrôle d'accès par rôle,
+  transitions immuables, gestion de l'expiration et contrats de callback.
+
+## 5. Carte des capacités
+
+| Travail | Capacité technique centrale | Analogue réel | Focus d'intégration |
+|---|---|---|---|
+| T1 | Règles métier et logique de dates exacte | Moteur de règles / service de sélection | — |
+| T2 | Pseudonymisation, HMAC, sortie canonique | Vie privée et data engineering | Approbation T6 et executor |
+| T3 | Chaînes de hachage, intégrité, reprise | Journal d'audit append-only | Restauration d'un snapshot fiable |
+| T4 | Planification, DST, allocation atomique | Réservation et ordonnancement de ressources | Porte d'éligibilité T1 |
+| T5 | Validation de graphes et agrégation | Traitement d'événements / gestion de cas | — |
+| T6 | FSM, RBAC, séparation des tâches | Plateforme d'approbation d'entreprise | Exécution de l'export T2 |
+
+Cette carte est une analyse qualitative de la complexité, pas un score officiel
+de difficulté.
+
+## 6. Pourquoi la mesure est crédible
+
+### Tests visibles et tests cachés
+
+| Travail | T1 | T2 | T3 | T4 | T5 | T6 | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Cas cachés | 19 | 33 | 57 | 26 | 15 | 45 | **195** |
+
+Le noteur applique seuls les changements `trialops/*.py` à un checkout vierge,
+injecte les tests cachés et exige une sortie zéro de la suite cachée comme de la
+suite complète. Les tests et la configuration pytest écrits par l'agent sont
+ignorés ; les changements de fichiers non autorisés sont rejetés ; une collecte
+vide, des skips, xfails ou xpasses ne comptent pas comme une réussite.
+
+### Harnais identique et preuves auditables
+
+Les quatre modèles utilisent les mêmes six outils et les mêmes limites. Trois
+répétitions permettent de distinguer une réussite fiable d'un succès
+accidentel : insuffisant pour des statistiques fines, mais suffisant pour
+révéler de grands écarts de fiabilité et des échecs déterministes. Chaque
+exécution conserve `transcript.json` (échanges modèle-outils), `diff.patch`
+(changements réels), `results.jsonl` (résultats) et `spend.jsonl` (jetons et
+coûts), rendant la mesure elle-même auditable.
+
+## 7. Ce que montrent les deux matrices mesurées
+
+| Modèle | Officielle (2026-11-13) | En direct (2026-11-14) |
+|---|---:|---:|
+| Kimi K3.1 Pro | 15/18 | 14/18 |
+| GLM 5.3 | 9/18 | 10/18 |
+| Claude Opus 5.5 | 15/18 | 14/18 |
+| Claude Fable 5.2 | **18/18** | **18/18** |
+| **Total** | **57/72** | **56/72** |
+
+- **Fable** est le seul modèle avec deux grands chelems.
+- **Les échecs de Kimi sur T4** ne signifient pas une incapacité à implémenter la
+  planification : son code réussit 25/26 tests cachés, mais sa chaîne d'erreur
+  `INELIGIBLE:` manque le contrat exact. Une logique correcte ne garantit pas
+  une livraison conforme au contrat.
+- **Les échecs d'Opus sur T2** révèlent un autre écart : la fonction d'export
+  locale est terminée, mais `execute_reuse_export` n'a jamais été implémentée.
+  Terminer une partie d'une exigence multi-étapes n'est pas terminer le travail.
+- **Les échecs de GLM sont surtout des échecs de processus** : plafond de 30
+  appels atteint, fichiers temporaires rejetés par le noteur, et absence de
+  convergence même quand une grande partie du code est correcte.
+
+La décomposition par modèle et par travail figure dans `out-live/REPORT.md`, §6.
+
+## 8. Périmètre et parcours de lecture recommandé
+
+Ce benchmark évalue **du travail Python bien spécifié par un agent de codage**,
+et non l'ensemble de l'ingénierie logicielle : architecture de grands systèmes,
+systèmes distribués, concurrence de vraies bases de données, déploiement,
+maintenance longue ou collaboration d'équipe ne sont pas couverts. Trois
+répétitions éclairent la fiabilité, sans permettre un classement précis.
+
+Ordre de lecture conseillé :
+
+1. `README.md` — objectif, modèles, résultats et carte du dépôt.
+2. `tasks/tasks.json` — les invites exactes utilisées pendant la mesure.
+3. `harness/agent.py` — boucle d'agent et `grade()` (il n'existe pas de
+   `grader.py` séparé).
+4. `harness/run_matrix.py` — couloirs, reprise et événements de cycle de vie.
+5. `harness/meter.py` — prix des jetons, coûts et arrêt budgétaire dur.
+6. `out-live/REPORT.md` — preuves d'échecs et analyse en cinq dimensions.
+
+L'annexe conserve les détails : principes et architecture (§§1–3), contrats
+précis et conception des tests (§4), agent et notation (§5), comptage et
+exécution (§§6–7), interprétation statistique (§8), guides d'extension (§9) et
+schémas de données (§10).
+
+# Annexe — Conception technique détaillée
+
 ## 1. Objectif et non-objectifs
+
+
+
+
 
 **Ce qui est mesuré.** La fiabilité et le coût de quatre modèles de fondation
 servis sur Amazon Bedrock, agissant comme agents de codage autonomes sur six

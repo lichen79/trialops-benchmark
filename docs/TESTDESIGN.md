@@ -5,6 +5,258 @@ decision was made, and how to proceed: validate, run, extend, and interpret it.
 It complements `README.md` (results), `USERGUIDE.md` (operations), and
 `out-live/REPORT.md` (the latest measurement analysis).
 
+## How to read this document
+
+**Start with the front part.** It explains the objective, the run lifecycle, and
+the six jobs in plain language. **The Annex** contains the precise contracts,
+test pressure points, harness internals, extension guide, and data schemas.
+
+## 1. Design objective
+
+On Amazon Bedrock, compare four models on their ability to complete Python
+engineering work in the **same real coding environment, with the same prompt,
+tools, and execution limits**.
+
+This is not a question-answering exercise. Each model acts like an IT engineer:
+it inspects an existing repository, understands requirements, plans and edits an
+implementation, runs tests, diagnoses failures, and iterates. An independent,
+authoritative hidden pytest suite then decides whether the work is complete.
+
+> **The central principle: do not score how well a model explains code; score
+> whether its delivered code passes tests.**
+
+Every run allows at most **30 model calls**, **20 minutes**, and a
+**16,384-token completion budget**. All models share one system prompt, one
+agent loop, and six tools: `list_files`, `read_file`, `write_file`, `edit_file`,
+`run_tests`, and `finish`.
+
+Each measurement is:
+
+```text
+6 jobs × 4 models × 3 repetitions = 72 runs
+```
+
+The repository now contains two independent measurements: the official matrix
+(2026-11-13) and the live re-run (2026-11-14), 144 runs in total.
+
+## 2. What one run looks like
+
+1. **Read** the existing code and repository structure.
+2. **Analyze** the requirement and choose an implementation approach.
+3. **Create or modify** Python code.
+4. **Run tests** and inspect errors.
+5. **Repair and iterate** within the fixed limits.
+6. **Grade independently**: the agent's production changes are applied to a
+   pristine checkout and evaluated by the authoritative visible and hidden
+   suites.
+
+The visible tests help the agent understand basic behavior. The hidden tests
+prevent it from passing merely by writing a plausible implementation or by
+optimizing its own tests. Agent-authored tests and pytest configuration never
+enter the grading checkout.
+
+## 3. One system, six jobs, two integration seams
+
+The jobs are modules of one fictional **Clinical Trial Operations** backend,
+not six unrelated programming puzzles:
+
+```text
+Trial Operations Platform
+├── T1 · Eligibility   — subject screening and consent rules
+├── T2 · Privacy       — privacy-safe research export
+├── T3 · Audit         — tamper-evident audit logs and recovery
+├── T4 · Scheduling    — visits, time zones, and capacity
+├── T5 · Safety        — safety-event follow-up triage
+└── T6 · Governance    — data-reuse approval workflow
+
+T2 Privacy → T6 Governance: export execution must pass the approval workflow.
+T4 Scheduling → T1 Eligibility: booking must verify eligibility first.
+```
+
+Each job starts with a self-contained feature. The harder jobs then add an
+integration extension. This distinguishes a model that can write one Python
+function from one that can read multiple modules, preserve API contracts, and
+complete a business workflow. T2 and T4 are the clearest cross-module cases;
+T3 adds restoration to the audit chain, and T6 supplies the executor seam used
+by T2.
+
+## 4. The six jobs in plain language
+
+### T1 — Eligibility: subject screening
+
+- **Scenario.** Decide whether a subject may enter a trial protocol on a given
+  date, based on informed consent, age, laboratory values, and exclusion flags.
+- **Implementation.** `evaluate_subject(subject, protocol, on)` returns
+  eligibility, ordered failure reasons, and the selected consent version.
+- **Hard parts.** Select the latest consent without falling back to an older
+  one; compute exact age rather than subtracting years; handle leap-day
+  birthdays and same-day consent; include age and lab boundaries; emit reasons
+  in the exact required order; return the selected version even when it is the
+  wrong version.
+- **Capability assessed.** A small business-rules engine: date logic, input
+  validation, and deterministic output.
+
+### T2 — Privacy: research export with governance
+
+- **Scenario.** Export trial data for another research purpose without leaking
+  names, email addresses, full birth dates, subject IDs, consent records, or
+  secrets.
+- **Implementation.** `export_subjects` filters consent purpose, withdrawal,
+  and retention dates; generates a 16-hex-character pseudonym using
+  HMAC-SHA256 over `purpose:id`; exports only allowlisted fields; and hashes a
+  canonical JSON manifest. `execute_reuse_export` must pass through T6 exactly
+  once and invoke the export exactly once through its executor.
+- **Hard parts.** Purpose-domain separation, canonical serialization, duplicate
+  and invalid IDs, non-mutation, and error messages that never echo sensitive
+  data. A failed export must not leave a false executed state.
+- **Capability assessed.** Data minimization, pseudonymization, cryptographic
+  hygiene, API contracts, and exactly-once cross-module execution.
+
+### T3 — Audit: integrity and trusted recovery
+
+- **Scenario.** Record who did what and when so later tampering can be detected.
+- **Implementation.** `AuditChain` links records with `previous_hash` and a
+  canonical SHA256 record hash. `verify` reports deterministic error codes;
+  `from_records` restores a snapshot and continues appending.
+- **Hard parts.** Canonical JSON, UTC normalization without microseconds,
+  sequence and linkage checks, duplicate detection, and deep-copy-independent
+  recovery. Trusted `expected_head` and `expected_length` also detect rehashed
+  edits and suffix truncation. Restoration errors use the exact
+  `INVALID_CHAIN:` format.
+- **Capability assessed.** Append-only data structures, cryptographic
+  integrity, serialization discipline, and recovery design.
+
+### T4 — Scheduling: visits and atomic reservations
+
+- **Scenario.** Schedule a sequence of visits for an eligible subject around
+  month ends, closures, time-zone transitions, and limited daily capacity.
+- **Implementation.** `plan_visits` computes candidates and allocates days;
+  `book_subject_visits` checks T1 eligibility and only then commits capacity.
+- **Hard parts.** Every monthly candidate derives from the original day
+  (Jan 31 → Feb 28 → Mar 31, never Mar 28). Nonexistent DST times move forward
+  by the gap; ambiguous times use `fold=0`. Capacity commits only after the
+  whole plan succeeds, decrements only listed dates, and remains untouched on
+  any failure. The ineligibility error has an exact format.
+- **Capability assessed.** Calendar arithmetic, zoneinfo/DST handling, resource
+  allocation, transaction-like atomicity, and rollback.
+
+### T5 — Safety: follow-up event triage
+
+- **Scenario.** Merge an initial safety report and its follow-ups into one case
+  rather than treating them as unrelated events.
+- **Implementation.** `triage_events(events, now)` follows `follow_up_of` links,
+  validates each chain, and produces a consolidated case.
+- **Hard parts.** Reject cycles, missing roots, duplicate IDs, and mixed
+  subjects or event codes. Use the earliest onset and highest seriousness;
+  derive deadlines of 7/15/30 days from that onset, not from report arrival;
+  preserve sources and uncertainty; compute overdue strictly as
+  `report_by < now`; produce order-independent output.
+- **Capability assessed.** Graph traversal, cycle detection, event correlation,
+  deterministic aggregation, and time-based SLA logic.
+
+### T6 — Governance: data-reuse approval workflow
+
+- **Scenario.** A requester submits a reuse request, a different reviewer
+  approves or rejects it, and only an authorized, unexpired approval may execute
+  the export.
+- **Implementation.** `apply_reuse_action` implements
+  `draft → submitted → approved → executed`, plus rejected and expired states,
+  with an optional executor hook used by T2.
+- **Hard parts.** Separation of duties, role checks, an exact `privacy_plan`,
+  representative and complete metadata, `quality_score >= 0.95`, and two
+  distinct clocks: 30-day approval expiry versus retention expiry. Return a
+  deep copy, append UTC-normalized history, and handle executor failure without
+  recording a false success.
+- **Capability assessed.** Finite-state machines, role-based access control,
+  immutable state transitions, expiration management, and callback contracts.
+
+## 5. Capability map
+
+| Job | Core engineering capability | Real-world analogue | Integration focus |
+|---|---|---|---|
+| T1 | Business rules and exact date logic | Rules engine / screening service | — |
+| T2 | Pseudonymization, HMAC, canonical output | Privacy and data engineering | T6 approval and executor |
+| T3 | Hash chains, integrity, recovery | Append-only audit log | Trusted snapshot restore |
+| T4 | Scheduling, DST, atomic allocation | Reservation and resource scheduling | T1 eligibility gate |
+| T5 | Graph validation and event aggregation | Event processing / case management | — |
+| T6 | FSM, RBAC, separation of duties | Enterprise approval workflow | T2 export execution |
+
+This is a qualitative complexity map, not an official difficulty score.
+
+## 6. Why the measurement is credible
+
+### Visible and hidden tests
+
+| Job | T1 | T2 | T3 | T4 | T5 | T6 | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Hidden cases | 19 | 33 | 57 | 26 | 15 | 45 | **195** |
+
+The grader applies only `trialops/*.py` changes to a pristine checkout, injects
+the hidden tests, and requires both the hidden suite and the full suite to exit
+zero. It ignores agent-authored tests and pytest configuration, rejects
+unauthorized file changes, and treats empty, skipped, xfailed, or xpassed
+outcomes as failures.
+
+### Identical harness and audit trail
+
+All four models use the same six tools and the same limits. Repetition reveals
+whether a pass is reliable or accidental: three attempts per job cannot support
+fine-grained statistics, but they do expose large reliability gaps and
+deterministic failures. Each run preserves its prompt-and-tool transcript,
+final code diff, grading result, token usage, wall time, and cost in
+`transcript.json`, `diff.patch`, `results.jsonl`, and `spend.jsonl`.
+
+## 7. What the two measured matrices show
+
+| Model | Official (2026-11-13) | Live re-run (2026-11-14) |
+|---|---:|---:|
+| Kimi K3.1 Pro | 15/18 | 14/18 |
+| GLM 5.3 | 9/18 | 10/18 |
+| Claude Opus 5.5 | 15/18 | 14/18 |
+| Claude Fable 5.2 | **18/18** | **18/18** |
+| **Total** | **57/72** | **56/72** |
+
+- **Fable** is the only model with two clean sweeps.
+- **Kimi's T4 failures** are not an inability to implement scheduling: its code
+  passed 25/26 hidden tests, but its `INELIGIBLE:` error string missed the exact
+  contract. Correct logic is not necessarily contract-correct delivery.
+- **Opus's T2 failures** expose a different gap: it completed the local export
+  feature but never implemented `execute_reuse_export`. Completing part of a
+  multi-stage requirement is not completion.
+- **GLM's failures are largely process failures**: hitting the 30-call ceiling,
+  leaving scratch files that the grader rejects, and failing to converge even
+  when much of its code is correct.
+
+For a model-by-model and job-by-job breakdown, see `out-live/REPORT.md`, §6.
+
+## 8. Scope and recommended reading path
+
+This is a benchmark of **well-specified Python coding-agent work**, not a full
+assessment of software architecture, distributed systems, production database
+concurrency, deployment, long-term maintenance, or team collaboration. Three
+repetitions support reliability observations, not precise model rankings.
+
+Suggested reading order:
+
+1. `README.md` — objective, models, results, and repository map.
+2. `tasks/tasks.json` — the exact prompts used in measurement.
+3. `harness/agent.py` — the agent loop and `grade()` (there is no separate
+   `grader.py`).
+4. `harness/run_matrix.py` — lanes, resume behavior, and lifecycle events.
+5. `harness/meter.py` — token prices, cost accounting, and budget hard stop.
+6. `out-live/REPORT.md` — failure evidence and five-dimension analysis.
+
+The Annex retains the detailed material: design principles and architecture
+(§§1–3), exact job contracts and test design (§4), agent and grading internals
+(§5), metering and execution (§§6–7), statistical interpretation (§8), extension
+guides (§9), and data schemas (§10).
+
+# Annex — Detailed technical design
+
+
+
+
+
 ## 1. Purpose and non-goals
 
 **What it measures.** How reliably and how cheaply four foundation models,

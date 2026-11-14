@@ -63,13 +63,13 @@ full failure taxonomy with evidence.
 | Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 calls · 36/36 finish | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 calls · 36/36 finish | 36/36 |
 
-![Five-dimension radar chart comparing the four models](docs/assets/five-dimensions-radar.svg)
+![Five-dimension radar chart comparing the four models](docs/assets/five-dimensions-radar.png)
 
 For the radar chart, efficiency is normalized as
 `50 × (1 − median calls / 30) + 50 × (natural finishes / 36)`; all other axes
-show their measured percentages. [SVG](docs/assets/five-dimensions-radar.svg) ·
+show their measured percentages. [PNG](docs/assets/five-dimensions-radar.png) ·
 [data](docs/assets/five-dimensions-radar.json) ·
-[generator](harness/radar_chart.py).
+[generator](harness/radar_chart_mpl.py).
 
 Correctness = hidden tests passed ÷ executed (suites that never ran are
 excluded); Requirements = every required API implemented with exact error

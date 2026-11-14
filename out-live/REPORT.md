@@ -190,16 +190,16 @@ Both sessions used identical configuration, so they are pooled: **6 runs per
 | Claude Opus 5.5 | 946/946 (100%) | 30/36 | 17/24 | 6.0 · 36/36 | 35/36 |
 | Claude Fable 5.2 | 1170/1170 (100%) | 36/36 | 24/24 | 5.0 · 36/36 | 36/36 |
 
-![Five-dimension radar chart comparing the four models](../docs/assets/five-dimensions-radar.svg)
+![Five-dimension radar chart comparing the four models](../docs/assets/five-dimensions-radar.png)
 
 For the radar chart, the efficiency axis is normalized to a 0–100 composite:
 `50 × (1 − median calls / 30) + 50 × (natural finishes / 36)`. All other axes
 show their measured percentages. Normalized scores (C/R/I/E/D): Kimi
 99.4/83.3/70.8/85.0/100.0; GLM 98.5/86.1/66.7/9.7/19.4; Opus
 100.0/83.3/70.8/90.0/97.2; Fable 100.0/100.0/100.0/91.7/100.0.
-[SVG source](../docs/assets/five-dimensions-radar.svg) ·
+[PNG image](../docs/assets/five-dimensions-radar.png) ·
 [machine-readable data](../docs/assets/five-dimensions-radar.json) ·
-[generator](../harness/radar_chart.py).
+[generator](../harness/radar_chart_mpl.py).
 
 ### 6.2 Per-job detail
 
